@@ -6,7 +6,7 @@
  * the balance updates, so a crash mid-batch resumes from a consistent
  * point and replay is harmless.
  *
- * Two things worth knowing:
+ * Three things worth knowing:
  *
  *   - Failed transactions still land in ledgers. Anything that isn't
  *     tesSUCCESS is skipped.
@@ -15,10 +15,10 @@
  *     transaction's own fields. The `Amount` on a Payment is what was
  *     requested; the metadata records what actually moved. Reading
  *     `Amount` is a classic and quiet source of wrong balances.
+ *     `getBalanceChanges` from xrpl.js does the metadata walk for us.
  *
- * `getBalanceChanges` from xrpl.js does the metadata walk for us —
- * diffing RippleState nodes and getting the sign convention right.
- * Hand-rolling it is possible and not worth the bugs.
+ *   - `getBalanceChanges` reports each trust line from BOTH sides, and
+ *     the `issuer` field means different things on each. See below.
  */
 import { getBalanceChanges } from 'xrpl'
 import { pool, query } from '../db/pool.js'
@@ -31,19 +31,53 @@ interface EventRow {
   raw: { tx: any; meta: any }
 }
 
-export async function project(opts: { verbose?: boolean } = {}) {
-  // A trust line is two-sided. getBalanceChanges emits a row per side,
-  // and on the ISSUER's own row the `issuer` field is the COUNTERPARTY,
-  // not the issuer. Left raw, the issuer's position splits into one row
-  // per holder and the column means two different things. Rewriting it
-  // to the account itself collapses them into one.
-  const knownIssuers = new Set(
-    (await query<{ issuer: string }>('select distinct issuer from assets'))
-      .map(r => r.issuer),
-  )
-  if (knownIssuers.size === 0) {
-    throw new Error('no assets in registry — seed before projecting')
+/**
+ * THE DIRECTIONAL TRAP.
+ *
+ * A trust line is a two-sided object, and `getBalanceChanges` emits a
+ * row for each side. On the HOLDER's row, `issuer` is the token issuer,
+ * which is what you'd expect. On the ISSUER's own row, `issuer` is the
+ * COUNTERPARTY — the holder.
+ *
+ * So issuing 500 PRP to alice and 100 to bob produces:
+ *
+ *   (account=alice,  issuer=ISSUER, +400)   <- issuer means issuer
+ *   (account=bob,    issuer=ISSUER, +100)   <- issuer means issuer
+ *   (account=ISSUER, issuer=alice,  -400)   <- issuer means counterparty
+ *   (account=ISSUER, issuer=bob,    -100)   <- issuer means counterparty
+ *
+ * Stored raw, the `issuer` column means two different things depending
+ * on which row you read, and the issuer's position is split across one
+ * row per holder instead of being a single number.
+ *
+ * Canonicalizing: if the account whose balance changed is itself a known
+ * token issuer, rewrite `issuer` to that account. The rows then collapse
+ * through the ON CONFLICT sum into one (-500), and the column means the
+ * same thing everywhere.
+ *
+ * The negative balance is correct and useful: negated, the issuer's
+ * balance is total units outstanding.
+ */
+function canonicalize(
+  account: string,
+  currency: string,
+  issuer: string,
+  knownIssuers: Set<string>,
+): { currency: string; issuer: string; account: string } {
+  if (knownIssuers.has(account)) {
+    return { currency, issuer: account, account }
   }
+  return { currency, issuer, account }
+}
+
+async function loadKnownIssuers(): Promise<Set<string>> {
+  const rows = await query<{ issuer: string }>(`select distinct issuer from assets`)
+  return new Set(rows.map(r => r.issuer))
+}
+
+export async function project(opts: { verbose?: boolean } = {}) {
+  const knownIssuers = await loadKnownIssuers()
+
   const [wm] = await query<{ last_projected_ledger: string; last_projected_tx: number }>(
     `select last_projected_ledger, last_projected_tx from sync_state where id = 1`,
   )
@@ -93,6 +127,10 @@ export async function project(opts: { verbose?: boolean } = {}) {
           // XRP has no issuer and isn't the asset we're tracking.
           if (!bal.issuer || bal.currency === 'XRP') continue
 
+          const k = canonicalize(
+            change.account, bal.currency, bal.issuer, knownIssuers,
+          )
+
           await client.query(
             `insert into holdings
                (currency, issuer, account, balance, last_ledger_index, last_tx_index)
@@ -101,10 +139,7 @@ export async function project(opts: { verbose?: boolean } = {}) {
                set balance = holdings.balance + excluded.balance,
                    last_ledger_index = excluded.last_ledger_index,
                    last_tx_index = excluded.last_tx_index`,
-            [bal.currency,
-             knownIssuers.has(change.account) ? change.account : bal.issuer,
-             change.account, bal.value,
-             ledgerIndex, ev.tx_index],
+            [k.currency, k.issuer, k.account, bal.value, ledgerIndex, ev.tx_index],
           )
         }
       }
@@ -137,9 +172,10 @@ export async function project(opts: { verbose?: boolean } = {}) {
 
 /**
  * Wipe the projection and rebuild it from scratch.
+ *
  * This is the operation the determinism test relies on: if replaying
- * produces different state, the projection is not a pure function of
- * the log and cannot be trusted.
+ * the log produces different state, the projection is not a pure
+ * function of the log and cannot be trusted.
  */
 export async function rebuild(opts: { verbose?: boolean } = {}) {
   await pool.query('truncate holdings')
