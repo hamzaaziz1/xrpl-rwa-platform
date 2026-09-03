@@ -5,7 +5,11 @@
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "migrate": "tsx src/db/migrate.ts"
+    "migrate": "tsx src/db/migrate.ts",
+    "reset": "tsx src/db/reset.ts",
+    "ingest": "tsx src/ingest/ingest.ts",
+    "project": "tsx src/ingest/project.ts",
+    "seed": "tsx src/seed.ts"
   },
   "keywords": [],
   "author": "",

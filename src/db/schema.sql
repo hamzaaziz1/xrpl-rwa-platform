@@ -1,6 +1,13 @@
 -- ============================================================
--- append-only record of what happened on the ledger.
--- never updated, never deleted. tx_hash is the idempotency key.
+-- append-only log of LEDGER TRANSACTIONS (not balance changes).
+-- one row per transaction. never updated, never deleted.
+-- tx_hash is the idempotency key.
+--
+-- balance changes are DERIVED from `raw` at projection time,
+-- because a single transaction can move balances for several
+-- accounts at once (e.g. a DEX trade touches both sides plus
+-- the issuer). keeping the log faithful means the projection
+-- logic can change and be replayed without re-fetching.
 -- ============================================================
 create table if not exists ledger_events (
   tx_hash        text primary key,
@@ -8,12 +15,8 @@ create table if not exists ledger_events (
   tx_index       int         not null,
   tx_type        text        not null,
   tx_result      text        not null,
-  account        text        not null,
-  destination    text,
-  currency       text,
-  issuer         text,
-  delta          numeric,
-  raw            jsonb       not null,
+  account        text        not null,   -- the submitting account
+  raw            jsonb       not null,   -- { tx, meta }
   ingested_at    timestamptz not null default now()
 );
 
@@ -22,7 +25,10 @@ create index if not exists ledger_events_order_idx
 
 -- ============================================================
 -- projection. derived ENTIRELY from ledger_events.
--- safe to drop and rebuild at any time — that's the test.
+-- safe to truncate and rebuild at any time — that's the test.
+--
+-- note: the issuer's own balance goes NEGATIVE, which is
+-- correct. -1 * issuer balance = total units outstanding.
 -- ============================================================
 create table if not exists holdings (
   currency           text    not null,
@@ -36,6 +42,7 @@ create table if not exists holdings (
 
 -- ============================================================
 -- the legal layer. NOT derived from the ledger.
+-- this is why the system exists.
 -- ============================================================
 create table if not exists assets (
   asset_id       text primary key,
@@ -54,6 +61,7 @@ create table if not exists investors (
   legal_name             text not null,
   email                  text,
   account                text unique,
+  seed                   text,          -- testnet only. see MANUAL §6.
   kyc_status             text not null default 'pending',
   kyc_submitted          timestamptz,
   kyc_approved           timestamptz,
@@ -61,12 +69,14 @@ create table if not exists investors (
 );
 
 -- ============================================================
--- how far ingest and projection have processed. single row.
+-- watermarks. single row.
+-- ingest and projection advance independently.
 -- ============================================================
 create table if not exists sync_state (
   id                    int primary key default 1,
   last_ingested_ledger  bigint not null default 0,
   last_projected_ledger bigint not null default 0,
+  last_projected_tx     int    not null default 0,
   updated_at            timestamptz not null default now(),
   constraint sync_state_singleton check (id = 1)
 );
