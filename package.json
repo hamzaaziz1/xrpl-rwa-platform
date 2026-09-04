@@ -9,7 +9,9 @@
     "reset": "tsx src/db/reset.ts",
     "ingest": "tsx src/ingest/ingest.ts",
     "project": "tsx src/ingest/project.ts",
-    "seed": "tsx src/seed.ts"
+    "seed": "tsx src/seed.ts",
+    "reconcile": "tsx src/recon/reconcile.ts",
+    "drift": "tsx src/recon/inject-drift.ts"
   },
   "keywords": [],
   "author": "",
