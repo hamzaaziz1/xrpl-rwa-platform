@@ -181,4 +181,127 @@ demo into something you could imagine operating.
 
 ---
 
+---
+
+## day 5 — building the thing that assumes i'm wrong
+
+the reconciler. reads live balances from the ledger, compares them against the
+projection, records anything that disagrees.
+
+the obvious objection: the projection is correct by construction, so what's
+there to find?
+
+three answers, and the first one already happened. **my projection logic was
+wrong yesterday.** the issuer rows split across one row per holder, balances
+looked plausible, and i only caught it because i happened to eyeball the output.
+a reconciler catches that class of bug without anyone squinting at a table.
+
+second: **events can be missed.** a dropped websocket, a gap in the backfill, an
+account added to the registry after transactions already happened against it.
+the log is only complete if ingest never failed, and assuming that is how you end
+up with a database that's internally consistent and quietly incomplete.
+
+third: **the ledger is the authority.** verifying against it is the only real
+check. everything else is checking my database against itself.
+
+so it checks both directions:
+
+- projection has a balance the ledger doesn't → my logic is wrong
+- ledger has a balance the projection never recorded → i missed an event
+
+the second one is the interesting failure. everything looks fine. all the
+numbers add up. and the data is simply not all there.
+
+---
+
+## day 5 — the fourth one, as predicted
+
+yesterday i wrote that trust lines are two-sided and every field means something
+different depending on which side you read, and that there'd be a fourth
+instance.
+
+it arrived within a day.
+
+`account_lines` returns one row per trust line, and the `account` field on each
+row is the **counterparty**, not the account you queried. so when i query the
+issuer, i get one row per holder, each keyed by that holder.
+
+which means the projection's single canonical row (`-500`) and the ledger's two
+rows (`-400`, `-100`) aren't directly comparable. compare them naively and every
+run reports drift on the issuer, forever.
+
+that's worse than missing drift. an alarm that's always on is an alarm you learn
+to ignore, and then the real one arrives and you scroll past it.
+
+fix is to sum the ledger side for known issuers before comparing. four lines.
+but i only knew to look for it because i'd already named the pattern.
+
+that's the argument for writing down the *shape* of a bug rather than the bug.
+three separate gotchas i'd have kept re-discovering; one rule i can now check
+against.
+
+---
+
+## day 5 — an alarm you've never seen fire
+
+the reconciler reported no drift, which is correct and proves nothing. a
+detector that has only ever said "all clear" is untested.
+
+so: a script that deliberately corrupts the projection. writes a wrong balance
+straight into `holdings`, bypassing the projection entirely.
+
+that's deliberately the shape of a real bug. the database is internally
+consistent — nothing about the row looks odd — and it disagrees with the ledger.
+
+```
+npm run drift
+  bob: was 100, now 237
+
+npm run reconcile
+  [CRITICAL] raju47NwQMd7... PRP
+    ledger 100 vs projection 237
+```
+
+caught it.
+
+then the part i actually care about:
+
+```
+npm run project -- --rebuild
+  projection wiped, replaying...
+  projected 19 events (0 skipped)
+
+npm run reconcile
+  reconciled 4 accounts — no drift
+```
+
+**the repair isn't a patch.** nothing corrected the bad row. the projection was
+thrown away and rebuilt from the event log, and the corruption couldn't survive
+because it was never in the log — it was written into a derived table.
+
+this is the payoff for the design decision on day 4. keeping `ledger_events` a
+faithful record of transactions, and `holdings` disposable, means any drift is
+recoverable by definition rather than by cleverness.
+
+i think that's the sentence worth leading with when i show this to someone. not
+"my reconciler works." **"the projection is a pure function of the log, so drift
+is always recoverable."** the reconciler is just how you find out you need to.
+
+it's also the demo moment. a regulator panel that permanently reads "all clear"
+demonstrates nothing. one that catches something on screen, and then repairs
+itself, demonstrates the mechanism.
+
+---
+
+## where stage 2 landed
+
+corrupt → detect → repair → verify. full cycle, working.
+
+the intellectually interesting half of this project is done. what's left — an
+API, three UIs, deployment — is mostly work rather than design.
+
+next is the API and the issuer view.
+
+---
+
 *continues.*

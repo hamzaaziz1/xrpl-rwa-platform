@@ -6,7 +6,7 @@ to this after months away — including me.
 Updated at each build stage. If something here contradicts the code, the code
 is right and this is stale; open an issue.
 
-**Last updated:** stage 1 complete (schema, ingest, projection)
+**Last updated:** stage 2 complete (schema, ingest, projection, reconciler)
 
 ---
 
@@ -271,6 +271,82 @@ worked on EVM indexers and wondering where that code is: it isn't needed.
 
 ---
 
+## 5b. The reconciler
+
+`src/recon/reconcile.ts`. Reads live trust line balances from the ledger,
+compares them against `holdings`, and records any divergence in
+`reconciliation_findings`.
+
+### Why it exists when the projection should already be correct
+
+1. **The projection logic can be wrong.** It was — issuer-side rows were split
+   across one row per holder until canonicalization was added. Balances looked
+   plausible. Nobody would have noticed.
+2. **Events can be missed.** A dropped websocket, a backfill gap, or an account
+   added to the registry after transactions already happened against it. The log
+   is only complete if ingest never failed.
+3. **The ledger is the authority.** Verifying against it is the only real check.
+   Everything else is checking the database against itself.
+
+### It checks both directions
+
+| Situation | Means |
+|---|---|
+| Projection has a balance the ledger doesn't | Projection logic bug |
+| Ledger has a balance the projection never recorded | Missed event during ingest |
+
+The second matters more operationally, because it is the failure mode where the
+database looks internally consistent and is simply incomplete.
+
+### Issuer comparison
+
+The projection stores the issuer as one canonical row (`-500`). The ledger stores
+one trust line per holder (`-400` against Alice, `-100` against Bob). The
+reconciler sums the ledger side before comparing.
+
+Comparing naively produces permanent false drift on every run — an alarm that is
+always on, which is the same as no alarm.
+
+This is the fourth instance of the two-sided trust line problem. See §8.
+
+### Always reads `validated`
+
+Reading `current` compares against a ledger that has not been finalised,
+producing phantom drift that disappears on the next run. That is the worst kind
+of alert: intermittent, unreproducible, and trains you to ignore it.
+
+### Severity
+
+| Level | When |
+|---|---|
+| `info` | Difference under 1e-9. Floating-point noise, not recorded. |
+| `warning` | Real but under 1% of the larger value. |
+| `critical` | Over 1%, or one side is missing entirely. |
+
+### Drift injection
+
+`src/recon/inject-drift.ts` writes a wrong balance directly into `holdings`,
+bypassing the projection. This is the shape of a real bug: the database is
+internally consistent and disagrees with the ledger.
+
+```bash
+npm run drift                    # corrupt a random holding by +137
+npm run drift -- --amount 250    # by a specific amount
+npm run reconcile                # detects it as CRITICAL
+npm run project -- --rebuild     # repairs it
+npm run reconcile                # clean
+```
+
+**The repair is not a patch.** It throws away the projection and replays the log.
+The corruption cannot survive because it was never in the log — it was written
+into a derived table. This is the payoff for keeping `ledger_events` a faithful
+record and `holdings` disposable.
+
+A reconciler that has only ever reported "no drift" is untested. The absence of
+an alarm proves nothing until you have watched it fire.
+
+---
+
 ## 6. Custody
 
 The backend holds investor private keys and signs on their behalf.
@@ -311,6 +387,19 @@ docker compose exec db psql -U rwa -d rwa      # sql shell
 docker compose down -v                         # DESTROYS the volume
 ```
 
+### Commands
+
+| Command | What it does |
+|---|---|
+| `npm run migrate` | Apply schema. Idempotent. |
+| `npm run reset` | Drop and recreate every table. Destroys data. |
+| `npm run seed` | Fund accounts, issue an asset, onboard two investors, trade. |
+| `npm run ingest -- --once` | Backfill and exit. Omit `--once` to stay live. |
+| `npm run project` | Apply new events to `holdings`. |
+| `npm run project -- --rebuild` | Wipe and replay the whole log. |
+| `npm run reconcile` | Compare projection against live ledger. |
+| `npm run drift` | Deliberately corrupt a holding, for demos. |
+
 ---
 
 ## 8. Gotchas
@@ -328,6 +417,10 @@ now caused three separate bugs, and they are all the same bug:
    token issuer. On the issuer's own row, `issuer` is the **counterparty** — so
    the issuer's position splits into one row per holder and the column means two
    different things depending on which row you read.
+4. `account_lines` returns one row per trust line, and the `account` field on
+   each row is the **counterparty**, not the account queried. So an issuer's
+   lines are keyed by holder, and the reconciler has to sum them before comparing
+   against the projection's single canonical row.
 
 The projection canonicalizes (3): if the account whose balance changed is itself
 a known issuer, `issuer` is rewritten to that account. The rows then collapse
