@@ -172,11 +172,31 @@ export async function reconcile(opts: { verbose?: boolean; record?: boolean } = 
     }
 
     if (record) {
+      // Close out anything that was drifting and no longer is. Without
+      // this, a repaired finding sits unresolved forever and the panel
+      // shows a permanent alert — which trains people to ignore it.
+      const stillDrifting = findings.map(f => `${f.currency}|${f.issuer}|${f.account}`)
+      await pool.query(
+        `update reconciliation_findings
+            set resolved_at = now()
+          where resolved_at is null
+            and (currency || '|' || issuer || '|' || account) <> all($1::text[])`,
+        [stillDrifting],
+      )
+
+      // Only record a finding if this (currency, issuer, account) isn't
+      // already open. Re-running the reconciler shouldn't pile up
+      // duplicates of the same unresolved problem.
       for (const f of findings) {
         await pool.query(
           `insert into reconciliation_findings
              (currency, issuer, account, ledger_value, registry_value, severity)
-           values ($1, $2, $3, $4, $5, $6)`,
+           select $1, $2, $3, $4, $5, $6
+            where not exists (
+              select 1 from reconciliation_findings
+               where resolved_at is null
+                 and currency = $1 and issuer = $2 and account = $3
+            )`,
           [f.currency, f.issuer, f.account, f.ledgerValue, f.registryValue, f.severity],
         )
       }
