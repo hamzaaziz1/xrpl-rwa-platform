@@ -6,7 +6,7 @@ to this after months away — including me.
 Updated at each build stage. If something here contradicts the code, the code
 is right and this is stale; open an issue.
 
-**Last updated:** stage 2 complete (schema, ingest, projection, reconciler)
+**Last updated:** stage 3 in progress (API reads, async write path)
 
 ---
 
@@ -347,6 +347,96 @@ an alarm proves nothing until you have watched it fire.
 
 ---
 
+## 5c. The write path
+
+`src/tx/`. Writes are asynchronous: the API records an intent and returns
+immediately; a separate worker moves it through its lifecycle.
+
+### Why not submit-and-wait
+
+Blocking the HTTP request until validation is simpler and would work at this
+scale. It was rejected because the interesting problem is the same one the
+reconciler solves, in the other direction: **between submitting a transaction
+and learning its outcome, you do not know what happened.** If the only record of
+the attempt lives in an in-flight HTTP request, that window loses transactions
+silently.
+
+Read path: what we believe vs what is true.
+Write path: what we meant vs what happened.
+
+### Intent lifecycle
+
+| Status | Meaning |
+|---|---|
+| `pending` | Recorded, not yet submitted |
+| `submitted` | Sent to the ledger, outcome unknown |
+| `confirmed` | Validated with `tesSUCCESS` |
+| `failed` | Validated with a `tec`/`tem` code — it landed, it failed |
+| `expired` | `LastLedgerSequence` passed. **Definitively dead.** |
+| `abandoned` | Lost track. Needs a human. |
+
+`submitted` is the state that justifies the design. It is the honest admission
+that we have acted and do not yet know the result. Most systems have this window
+and simply do not represent it.
+
+### Why `expired` is final
+
+Every transaction carries `LastLedgerSequence`. Once that ledger closes without
+validation, the transaction can **never** apply. Not "probably won't" — cannot.
+There is no mempool it can resurface from.
+
+That guarantee is what makes retry safe here and hard elsewhere. On a chain with
+a mempool, an unconfirmed transaction might land an hour later, so retrying risks
+performing the action twice.
+
+### Sequence allocation
+
+Every transaction carries a sequence number for its sending account, used exactly
+once, in order.
+
+Reading the account's current sequence from the ledger at submit time breaks
+under concurrency: two requests read the same number, one lands, the other fails
+with `tefPAST_SEQ`. It works perfectly in testing and fails the moment two things
+happen at once.
+
+So sequences come from `account_sequences` under `FOR UPDATE`, which serialises
+allocators. The ledger is consulted only to initialise, and to resync.
+
+**`resyncSequence` is not optional.** When a transaction expires or a submission
+is rejected, the sequence was never consumed on-ledger, so our counter is ahead.
+Every subsequent transaction from that account then fails with `tefPAST_SEQ`
+until the counter is pulled back. Without it, the account wedges after the first
+expiry.
+
+### The worker submits serially
+
+Allocation is locked, but **submission order matters independently**. The ledger
+rejects a transaction whose sequence arrives before its predecessor. Parallel
+submission from one account produces `tefPAST_SEQ` under load — a bug that only
+appears when two people click at once.
+
+### Failures carry real reasons
+
+When an intent fails, the resolver runs `xrpl-why` against the engine result and
+stores the diagnosis. So the UI shows "the issuer requires authorization and has
+not authorized this trust line" rather than `tecPATH_DRY`.
+
+Diagnosis is best-effort and wrapped in a try/catch: a failure to explain must
+never stop an intent from resolving.
+
+### Running it
+
+```bash
+npm run worker           # loop
+npm run worker -- --once # one pass, useful for tests
+```
+
+The worker is a separate process from the API on purpose. If the API dies
+mid-request, the intent survives and the worker picks it up — which is the whole
+reason for recording intent before acting.
+
+---
+
 ## 6. Custody
 
 The backend holds investor private keys and signs on their behalf.
@@ -399,6 +489,8 @@ docker compose down -v                         # DESTROYS the volume
 | `npm run project -- --rebuild` | Wipe and replay the whole log. |
 | `npm run reconcile` | Compare projection against live ledger. |
 | `npm run drift` | Deliberately corrupt a holding, for demos. |
+| `npm run api` | Read API on :3001. |
+| `npm run worker` | Drive intents through their lifecycle. |
 
 ---
 

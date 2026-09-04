@@ -304,4 +304,134 @@ next is the API and the issuer view.
 
 ---
 
+---
+
+## day 6 — arguing myself out of the easy option
+
+started on the API. read endpoints first, which were unremarkable — assets,
+holdings, investors, reconciliation, the event log.
+
+one bug worth recording though. the reconciliation endpoint reported drift that
+i'd already repaired. the finding was sitting there with `resolved_at` null,
+because nothing ever closed it.
+
+that's the same failure as yesterday's issuer comparison arriving from a
+different direction: **an alarm that stays on after the problem is gone.** a
+regulator panel showing a permanent alert is worse than no panel, because people
+learn to scroll past it, and then the real one arrives and gets scrolled past
+too.
+
+fix: each reconciler run knows the current truth, so anything unresolved that
+isn't in this run's findings has been fixed and gets closed automatically. also
+stopped it inserting duplicate rows for the same still-open problem.
+
+both of these would have looked completely fine in a screenshot.
+
+---
+
+## day 6 — the write path, done properly
+
+the question was whether writes should block until the ledger validates, or
+return immediately and let the client poll.
+
+claude argued for blocking — eight seconds is tolerable for a demo, and async
+done badly is worse than sync. i pushed back, because in the real world these
+systems are asynchronous and i think a CTO looks at exactly this.
+
+we both ended up somewhere better than where either of us started. the point
+isn't UX. **async only impresses if the hard parts are handled**, and the hard
+parts are:
+
+- an intents table recording what you meant to do, before you do it
+- explicit `LastLedgerSequence` so an unconfirmed transaction is definitively
+  dead rather than ambiguous
+- sequence allocation under a lock
+- a resolver that reconciles pending intents against the ledger
+
+202-and-forget has none of those and is worse than blocking. it says "submitted"
+while the ledger says nothing happened — which undercuts the exact claim the
+reconciler makes.
+
+so: the full version. and it turned out not to be plumbing at all.
+
+---
+
+## day 6 — the same idea, other direction
+
+what i didn't see until it was built:
+
+**read path** — the projection is a pure function of the log, and the reconciler
+checks it against the ledger. what we believe vs what is true.
+
+**write path** — intent is recorded before action, and the resolver checks the
+ledger for the outcome. what we meant vs what happened.
+
+it's the same discipline twice. never assume your database and the ledger agree.
+record what you know, verify against the authority, make the gap explicit rather
+than hoping it isn't there.
+
+that's a position about building on ledgers, not a list of features. i think
+that's the thing to lead with when i show this to someone.
+
+---
+
+## day 6 — the state that justifies the design
+
+```
+created ee0ab65e...  status=pending
+
+npm run worker -- --once
+  submitted  freeze
+  resolved: 0 confirmed, 0 failed, 0 expired, 1 still pending
+
+npm run worker -- --once
+  confirmed  freeze  tesSUCCESS
+```
+
+the middle line is the whole thing. after the first pass the intent was
+`submitted` and the worker honestly reported it didn't know the outcome yet. it
+had sent a transaction and was waiting.
+
+every fire-and-forget design has that window. almost none of them represent it.
+
+then the full round trip: intent → submit → ledger validates → ingest picks it up
+→ projection applies it → reconciler confirms no drift. both halves of the system
+agreeing about the same event.
+
+---
+
+## day 6 — the things that only break under concurrency
+
+two bugs designed around rather than encountered, which i want to record because
+i'd have hit both eventually and been confused.
+
+**sequence allocation needs a lock.** every XRPL transaction carries a sequence
+number for its account, used exactly once, in order. reading the current sequence
+from the ledger at submit time means two concurrent requests get the same number
+— one lands, one fails with `tefPAST_SEQ`. works perfectly in testing. fails the
+moment two people click at once.
+
+**and resyncing isn't optional.** when a transaction expires, the sequence was
+never consumed on-ledger, so my counter is ahead of reality. every subsequent
+transaction from that account fails until the counter is pulled back. without
+that, the account wedges permanently after the first expiry.
+
+**submission has to be serial even with locked allocation.** the ledger rejects a
+transaction whose sequence arrives before its predecessor. so allocating
+correctly isn't enough — the order they go out in matters too.
+
+none of these appear with one user clicking one button. all of them appear in
+production.
+
+---
+
+## where day 6 landed
+
+read endpoints working, full async write path proven end to end, `xrpl-why`
+wired in so failures carry real reasons instead of `tec` codes.
+
+next: write endpoints, then the three views.
+
+---
+
 *continues.*
