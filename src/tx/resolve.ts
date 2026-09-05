@@ -99,7 +99,14 @@ export async function resolveAll(
       const code = validated.meta?.TransactionResult ?? 'unknown'
       const ledgerIndex = validated.ledger_index ?? null
 
-      if (code === 'tesSUCCESS') {
+      // tecDUPLICATE means the object already exists on-ledger — the
+      // desired end state is already true. Treating it as a failure
+      // leaves the registry permanently disagreeing with a ledger that
+      // is already correct, which is the exact drift this system exists
+      // to prevent.
+      const alreadyDone = code === 'tecDUPLICATE'
+
+      if (code === 'tesSUCCESS' || alreadyDone) {
         await pool.query(
           `update intents
               set status = 'confirmed', engine_result = $2,
@@ -107,6 +114,27 @@ export async function resolveAll(
             where intent_id = $1`,
           [intent.intent_id, code, ledgerIndex],
         )
+
+        // The registry must not claim a state the ledger hasn't reached.
+        // The API writes 'approving' when it accepts the request; only a
+        // confirmed on-ledger credential moves it to 'approved'.
+        if (intent.kind === 'credential_issue' && intent.params?.subject) {
+          await pool.query(
+            `update investors
+                set kyc_status = 'approved', kyc_approved = now()
+              where account = $1`,
+            [intent.params.subject],
+          )
+        }
+        if (intent.kind === 'credential_revoke' && intent.params?.subject) {
+          await pool.query(
+            `update investors
+                set kyc_status = 'revoked', credential_accepted_at = null
+              where account = $1`,
+            [intent.params.subject],
+          )
+        }
+
         counts.confirmed++
         if (opts.verbose) console.log(`  confirmed  ${intent.kind}  ${code}`)
       } else {

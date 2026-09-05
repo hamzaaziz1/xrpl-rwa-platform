@@ -50,14 +50,21 @@ export function IssuerView({ platform }: { platform: Snapshot & { refresh: () =>
           <div>
             <dt className="text-xs text-neutral-500">Units outstanding</dt>
             <dd className="mt-1 text-lg tabular-nums">{units(asset.units_outstanding)}</dd>
+            <dd className="text-xs text-neutral-400">held on ledger</dd>
           </div>
           <div>
-            <dt className="text-xs text-neutral-500">Authorised</dt>
-            <dd className="mt-1 text-lg tabular-nums">{units(asset.total_units)}</dd>
+            <dt className="text-xs text-neutral-500">Issue ceiling</dt>
+            <dd className="mt-1 text-lg tabular-nums text-neutral-500">
+              {units(asset.total_units)}
+            </dd>
+            <dd className="text-xs text-neutral-400">registry limit</dd>
           </div>
           <div>
             <dt className="text-xs text-neutral-500">Holders</dt>
-            <dd className="mt-1 text-lg tabular-nums">{asset.holder_count}</dd>
+            <dd className="mt-1 text-lg tabular-nums">
+              {holdings.filter(h => Number(h.balance) > 0).length}
+            </dd>
+            <dd className="text-xs text-neutral-400">with a non-zero balance</dd>
           </div>
           <div>
             <dt className="text-xs text-neutral-500">Issuer</dt>
@@ -88,7 +95,7 @@ export function IssuerView({ platform }: { platform: Snapshot & { refresh: () =>
         </Panel>
       )}
 
-      <Panel title="Holders" subtitle="Issuer controls act on the ledger directly">
+            <Panel title="Register" subtitle="All accounts with a trust line for this asset">
         {holdings.length === 0 ? (
           <Empty>No holders yet.</Empty>
         ) : (

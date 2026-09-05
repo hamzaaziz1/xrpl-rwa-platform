@@ -160,6 +160,21 @@ await pool.query(
 )
 console.log(`  asset ${ASSET_ID}`)
 
+// carol applies but is NOT approved, so the KYC flow is demonstrable
+const { wallet: carol } = await client.fundWallet()
+console.log(`  carol (pending KYC) ${carol.address}`)
+
+await pool.query(
+  `insert into investors
+     (investor_id, legal_name, account, seed, kyc_status, kyc_submitted)
+   values ('inv-003', 'Carol Mensah', $1, $2, 'pending', now())
+   on conflict (investor_id) do update
+     set account = excluded.account, seed = excluded.seed,
+         kyc_status = 'pending', kyc_approved = null,
+         credential_accepted_at = null`,
+  [carol.address, carol.seed],
+)
+
 for (const [id, name, w] of [
   ['inv-001', 'Alice Nakamura', alice],
   ['inv-002', 'Bob Osei', bob],

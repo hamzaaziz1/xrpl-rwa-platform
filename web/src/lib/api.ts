@@ -14,10 +14,15 @@ async function get<T>(path: string): Promise<T> {
 }
 
 async function post<T>(path: string, body?: unknown): Promise<T> {
+  // Only send a content-type when there is actually a body. Declaring
+  // application/json with an empty body makes the server try to parse
+  // an empty string as JSON, which fails with a 400 before the handler
+  // ever runs.
   const res = await fetch(`${BASE}${path}`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: body ? JSON.stringify(body) : undefined,
+    ...(body
+      ? { headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }
+      : {}),
   })
   const json = await res.json()
   if (!res.ok) throw new Error(json?.error ?? `${res.status} ${path}`)

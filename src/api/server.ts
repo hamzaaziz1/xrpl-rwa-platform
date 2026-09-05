@@ -7,6 +7,19 @@ import { registerWrites } from './writes.js'
 const app = Fastify({ logger: false })
 await app.register(cors, { origin: true })
 
+// Several endpoints take no body. A client that sets content-type:
+// application/json with an empty body would otherwise get a 400 from
+// the parser before the handler ever runs.
+app.addContentTypeParser(
+  'application/json',
+  { parseAs: 'string' },
+  (_req, body: string, done) => {
+    if (!body || body.trim() === '') return done(null, {})
+    try { done(null, JSON.parse(body)) }
+    catch (err) { done(err as Error, undefined) }
+  },
+)
+
 registerWrites(app)
 
 // ---------------------------------------------------------------
