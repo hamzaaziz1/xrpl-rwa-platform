@@ -6,7 +6,7 @@ to this after months away — including me.
 Updated at each build stage. If something here contradicts the code, the code
 is right and this is stale; open an issue.
 
-**Last updated:** stage 3 in progress (API reads, async write path)
+**Last updated:** stage 3 complete (API reads and writes, async write path)
 
 ---
 
@@ -437,6 +437,65 @@ reason for recording intent before acting.
 
 ---
 
+## 5d. The API
+
+`src/api/`. Fastify. Reads in `server.ts`, writes in `writes.ts`.
+
+No authentication. This is a demo with three role views, and building login would
+consume a day and demonstrate nothing about tokenization. The role switcher is
+client-side and deliberately out of scope.
+
+### Reads
+
+| Endpoint | Returns |
+|---|---|
+| `GET /api/assets` | Assets with `units_outstanding` and `holder_count` |
+| `GET /api/assets/:id/holdings` | Holders joined to investor records |
+| `GET /api/investors` | Investors, excluding system accounts |
+| `GET /api/reconciliation` | Open findings plus sync watermarks |
+| `GET /api/events` | The ledger event log, newest first |
+| `GET /api/intents` | Recent intents, for an activity feed |
+| `GET /api/intents/:id` | One intent, for polling |
+
+`units_outstanding` is derived by negating the issuer's `holdings` row. It is not
+stored anywhere, so it cannot drift from the holder balances independently.
+
+The issuer's own row is excluded from `/holdings` — it is the negative mirror of
+every holder, not a holder itself.
+
+### Writes
+
+All return **202 Accepted** with an intent id and a poll URL. Not 200: the
+request has been accepted, not completed. Returning 200 would claim an outcome we
+do not have.
+
+| Endpoint | Intent kind |
+|---|---|
+| `POST /api/investors/:id/approve` | `credential_issue` |
+| `POST /api/investors/:id/revoke` | `credential_revoke` |
+| `POST /api/assets/:id/freeze` | `freeze` |
+| `POST /api/assets/:id/unfreeze` | `unfreeze` |
+| `POST /api/assets/:id/clawback` | `clawback` |
+| `POST /api/assets/:id/issue` | `token_issue` |
+
+Clients poll `GET /api/intents/:id` until `status` leaves `pending`/`submitted`.
+
+A failed intent carries `failure_reason` and `failure_fix` from `xrpl-why`, so
+the UI shows "the destination has no trust line for PRP" rather than
+`tecPATH_DRY`.
+
+### Running the two processes
+
+```bash
+npm run api      # :3001, records intents
+npm run worker   # submits and resolves them
+```
+
+Separate on purpose. If the API dies mid-request the intent survives, and the
+worker picks it up.
+
+---
+
 ## 6. Custody
 
 The backend holds investor private keys and signs on their behalf.
@@ -520,6 +579,13 @@ into one, and negating the issuer's balance gives total units outstanding.
 
 Whenever a trust line field looks wrong, ask which side you are reading from
 before assuming the data is bad.
+
+**Clawback clamps to the available balance — it does not fail on over-request.**
+Asking to claw back 99999 from a holder with 400 units takes 400 and returns
+`tesSUCCESS`. Sensible for court-ordered recovery, but it means any UI must show
+the holder's current balance next to the amount field. "Claw back 99999" silently
+meaning "take everything" is the kind of surprise that surfaces at the worst
+possible moment.
 
 **`tecPATH_DRY` means five different things.** No trust line, unauthorized line,
 frozen line (either side), global freeze, or `DefaultRipple` disabled. See the

@@ -434,4 +434,111 @@ next: write endpoints, then the three views.
 
 ---
 
+---
+
+## day 7 — the endpoints were the easy part
+
+write endpoints today. they turned out to be about twenty lines each, because
+everything difficult was already behind them. record an intent, return 202 with
+its id, done.
+
+that's the shape you want. the endpoints are thin because the design underneath
+is doing the work.
+
+202 rather than 200, deliberately. the request has been accepted, not completed.
+returning 200 would claim an outcome i don't have yet, which is the exact lie
+this whole design exists to avoid.
+
+first freeze through HTTP:
+
+```
+created   19:40:10
+submitted 19:40:14
+resolved  19:40:21
+```
+
+eleven seconds end to end. the API returned in milliseconds. those three
+timestamps are the honest record of an operation that took eleven seconds, and
+they're queryable rather than invisible.
+
+---
+
+## day 7 — clawback doesn't do what i assumed
+
+wanted a failure to test the diagnostics against, so i tried clawing back 99999
+units from a holder with 400.
+
+`tesSUCCESS`.
+
+it took all 400. **clawback clamps to the available balance rather than
+rejecting.**
+
+which is reasonable when you think about what clawback is for — a court-ordered
+recovery shouldn't fail because the balance moved since the order was written.
+but it means "claw back 99999" silently means "take everything", and an operator
+typing a wrong number gets no pushback at all.
+
+so the issuer view has to show the holder's current balance right next to the
+amount field, and probably cap the input. this is a UI requirement that came out
+of protocol behaviour, which i wouldn't have found by reading docs.
+
+it's also the second time this project has taught me the same lesson from a
+different angle: the dangerous failures are the ones that return success.
+
+---
+
+## day 7 — my own library, in my own app
+
+tried again for a real failure. issued tokens to an account with no trust line:
+
+```json
+{
+  "status": "failed",
+  "engine_result": "tecPATH_DRY",
+  "failure_reason": "The destination has no trust line for PRP from rBx1...",
+  "failure_fix": "The destination must submit a TrustSet transaction to opt in
+                  before they can receive this token."
+}
+```
+
+the ledger said `tecPATH_DRY`. the intent record says what actually went wrong
+and what to do about it.
+
+that's `xrpl-why` — the thing i published to npm on day three, after writing up
+the five causes of that exact error — running inside this platform, on a real
+failure, and producing something an operator could act on.
+
+the write-up, the library and the application aren't three separate projects any
+more. the article explains the problem, the package solves it, and the platform
+uses it. i didn't plan that arc. it came out of solving the same problem twice
+and noticing the second time.
+
+---
+
+## day 7 — the failure path is better than the success path
+
+small observation, but it's changed how i'm thinking about the UI.
+
+a confirmed intent tells you it worked. a failed one tells you what went wrong,
+why, and how to fix it. the failure carries strictly more information.
+
+most interfaces treat errors as an afterthought — a red toast that disappears in
+four seconds. here the most useful output in the entire system is the thing that
+appears when something breaks.
+
+so failures get at least as much room in the UI as successes. probably more.
+
+---
+
+## where the backend landed
+
+reads, writes, intents, worker, reconciler, diagnostics. everything the three
+views need now exists behind HTTP.
+
+next: the frontend. vite, react, typescript, and deliberately plain — a
+regulated-finance internal tool should look like one. restraint reads as
+judgement; polish on a demo reads as compensating for something.
+
+---
+
 *continues.*
