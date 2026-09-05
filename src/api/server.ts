@@ -2,9 +2,12 @@ import 'dotenv/config'
 import Fastify from 'fastify'
 import cors from '@fastify/cors'
 import { query, pool } from '../db/pool.js'
+import { registerWrites } from './writes.js'
 
 const app = Fastify({ logger: false })
 await app.register(cors, { origin: true })
+
+registerWrites(app)
 
 // ---------------------------------------------------------------
 // assets
