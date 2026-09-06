@@ -50,7 +50,7 @@ export interface Holding {
   last_ledger_index: string
   investor_id: string | null
   legal_name: string | null
-  kyc_status: string | null
+  kyc_status: 'pending' | 'issued' | 'approved' | 'revoked' | string | null
 }
 
 export interface Investor {
@@ -125,6 +125,9 @@ export const api = {
 
   approve: (investorId: string) =>
     post<{ intentId: string }>(`/api/investors/${investorId}/approve`),
+
+  acceptCredential: (investorId: string) =>
+    post<{ intentId: string }>(`/api/investors/${investorId}/accept-credential`),
 
   revoke: (investorId: string) =>
     post<{ intentId: string }>(`/api/investors/${investorId}/revoke`),

@@ -107,6 +107,43 @@ export function registerWrites(app: FastifyInstance) {
     },
   )
 
+  // ---- investor accepts their own credential --------------------
+  // The investor signs this, not the issuer. An issued but unaccepted
+  // credential grants no domain membership, so this is the step that
+  // actually makes someone eligible to trade.
+  app.post<{ Params: { id: string } }>(
+    '/api/investors/:id/accept-credential',
+    async (req, reply) => {
+      const [investor] = await query<{ account: string }>(
+        `select account from investors where investor_id = $1`, [req.params.id],
+      )
+      if (!investor?.account) {
+        return reply.code(404).send({ error: 'unknown investor' })
+      }
+
+      const [cred] = await query<{ issuer: string; credential_type: string }>(
+        `select issuer, credential_type from credentials
+          where subject = $1 and accepted_at is null and revoked_at is null
+          limit 1`,
+        [investor.account],
+      )
+      if (!cred) {
+        return reply.code(400).send({
+          error: 'no unaccepted credential for this investor',
+        })
+      }
+
+      const intent = await create({
+        kind: 'credential_accept',
+        actor: investor.account,
+        params: { issuer: cred.issuer, credentialType: cred.credential_type },
+        idempotencyKey: `accept:${req.params.id}:${cred.issuer}`,
+      })
+
+      return accepted(reply, intent)
+    },
+  )
+
   // ---- revoke KYC: delete the credential ------------------------
   app.post<{ Params: { id: string } }>(
     '/api/investors/:id/revoke',

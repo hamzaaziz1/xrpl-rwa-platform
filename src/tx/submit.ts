@@ -33,6 +33,7 @@ const LEDGER_WINDOW = 10
 
 export type IntentKind =
   | 'credential_issue'
+  | 'credential_accept'
   | 'credential_revoke'
   | 'trustline_authorize'
   | 'token_issue'
@@ -110,6 +111,17 @@ function buildTx(intent: IntentRow): any {
         Subject: p.subject,
         CredentialType: p.credentialType,
         ...(p.uri ? { URI: p.uri } : {}),
+      }
+
+    case 'credential_accept':
+      // Submitted BY the subject, not the issuer. This is the point of
+      // two-sided credentials: nobody can attach an attribute to your
+      // account without your signature.
+      return {
+        TransactionType: 'CredentialAccept',
+        Account: intent.actor,
+        Issuer: p.issuer,
+        CredentialType: p.credentialType,
       }
 
     case 'credential_revoke':

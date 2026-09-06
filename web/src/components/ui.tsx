@@ -70,6 +70,8 @@ const STATUS_STYLE: Record<string, string> = {
   drift:     'bg-red-50 text-red-800 border-red-300',
   approved:  'bg-emerald-50 text-emerald-800 border-emerald-300',
   approving: 'bg-amber-50 text-amber-800 border-amber-300',
+  issued:    'bg-amber-50 text-amber-800 border-amber-300',
+  revoked:   'bg-neutral-100 text-neutral-600 border-neutral-300',
   critical:  'bg-red-50 text-red-800 border-red-300',
   warning:   'bg-amber-50 text-amber-800 border-amber-300',
 }
