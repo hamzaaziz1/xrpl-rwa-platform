@@ -760,4 +760,110 @@ correct. a faithful projection shouldn't have that gap.
 
 ---
 
+---
+
+## day 9 — the arc, end to end
+
+added the missing step: the investor accepting their own credential.
+
+that's the piece that makes the whole onboarding story work. apply → issuer
+approves → **investor accepts** → eligible. the third step is the one that
+actually confers domain membership, and until today the app had no way to do it.
+
+the transaction is signed by the investor, not the issuer. that's the entire
+point of two-sided credentials — nobody can attach an attribute to your account
+without your signature. it would have been easy to have the backend sign it on
+their behalf and lose the distinction entirely.
+
+carol now goes pending → issued → approved in the browser, three real ledger
+transactions, no terminal.
+
+worth stating what changed between yesterday and today. yesterday she read
+`approved` because a column said so, and it was false. today she reads
+`approved` because there is an accepted credential on the XRP Ledger and the
+projection derived it. same word, completely different epistemics.
+
+---
+
+## day 9 — "why do i have to run a command?"
+
+i'd been running `npm run ingest -- --once`, which backfills and exits. so after
+every action i was manually re-running ingest and project to see the result, and
+i'd started to assume that was the design.
+
+it wasn't. drop the flag and ingest stays subscribed over a websocket. the only
+genuine gap was that the projection didn't run on a timer — ingest wrote to the
+log and nothing applied it. ten lines.
+
+now: four processes, no commands. click approve, watch it resolve. that's what a
+reviewer will actually experience, and i'd been demoing it to myself in the
+wrong mode for two days.
+
+lesson: **the way you run something during development quietly becomes your
+mental model of how it works.** i had convinced myself the flow was manual
+because my flow was manual.
+
+---
+
+## day 9 — the reset didn't reset
+
+clicked approve, nothing happened. no new intent, no ledger transaction.
+
+`reset.ts` drops six tables. `intents`, `credentials` and `account_sequences`
+weren't among them, so a reset left stale intents behind — including one with
+the idempotency key `approve:inv-003` from a previous database. `create()`
+correctly returned the existing intent, the API returned 202 with its id, and
+the worker had nothing to do because that intent had resolved days ago.
+
+two bugs in one. the reset was incomplete, and the idempotency key was a fixed
+string, meaning an investor could be approved exactly once ever — a revoke
+followed by re-approval would silently return the old intent.
+
+idempotency keys that never change aren't idempotency, they're a permanent lock.
+
+---
+
+## day 9 — freeze was invisible
+
+froze a holder and the register looked identical. no way to tell who was frozen,
+and both Freeze and Unfreeze stayed clickable.
+
+the data simply wasn't there. `holdings` tracked balances and nothing else, and
+freeze lives on the trust line.
+
+two options. read `account_lines` live in the API and merge the freeze flag in —
+quick, accurate, and the API reading the ledger directly rather than serving the
+projection. or project it properly from `TrustSet` events.
+
+took the second. the shortcut would have undercut the thing this project is
+arguing, in the API layer, for the sake of twenty minutes.
+
+and the direction trap once more: on a freeze `TrustSet`, `LimitAmount.issuer`
+is the **holder being frozen**, not the token issuer. sixth instance. i checked
+for it before writing the code rather than after.
+
+then the part that still feels like a trick: the column didn't exist when alice
+was frozen. i added it, replayed the log, and her freeze was already there. no
+ledger queries, no migration script, no backfill job.
+
+fourth time the day-4 decision has paid for itself.
+
+---
+
+## where this leaves things
+
+every piece of state the ledger knows about — balances, credentials, freeze — is
+projected from the event log. nothing is optimistically written. the reconciler
+checks balances and credentials in both directions. repair is always replay.
+
+the UI shows what it can prove and doesn't guess. an operator can see freeze
+state and can't take a contradictory action.
+
+remaining, both small and both documented: timestamps use `now()` rather than
+ledger close time, and the investor view doesn't yet show a holder their own
+freeze state — which is arguably the more important place to show it, since it
+explains why they can't trade.
+
+---
+
 *continues.*

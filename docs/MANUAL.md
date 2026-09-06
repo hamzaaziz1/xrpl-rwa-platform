@@ -6,7 +6,7 @@ to this after months away — including me.
 Updated at each build stage. If something here contradicts the code, the code
 is right and this is stale; open an issue.
 
-**Last updated:** stage 4 — three views, credentials projected.
+**Last updated:** stage 4 — three views, credentials and freeze projected.
 
 ---
 
@@ -493,6 +493,52 @@ npm run worker   # submits and resolves them
 
 Separate on purpose. If the API dies mid-request the intent survives, and the
 worker picks it up.
+
+---
+
+## 11. Freeze state is projected too
+
+`holdings.frozen` is derived from `TrustSet` transactions carrying `tfSetFreeze`
+(`0x00100000`) or `tfClearFreeze` (`0x00200000`). Nothing writes it directly.
+
+**Direction, again:** on a freeze `TrustSet`, the signer is the issuer and
+`LimitAmount.issuer` is the **holder being frozen**. Reading it as the token
+issuer gets every freeze attributed to the wrong account.
+
+A frozen holder keeps their balance and cannot move it, so a balance check alone
+tells you nothing. The register shows a `frozen` badge and offers only the
+applicable action — an operator cannot click Freeze on someone already frozen.
+
+This column was added *after* freezes had already happened, and the state was
+recovered by replaying the log. Nothing was fetched from the ledger.
+
+---
+
+## 12. Running it
+
+Four processes. None of them require manual intervention once started.
+
+```bash
+docker compose up -d      # postgres
+
+npm run ingest            # subscribes to the ledger, projects every 2s
+npm run api               # :3001
+npm run worker            # drives intents through their lifecycle
+cd web && npm run dev     # :5173
+```
+
+**`npm run ingest` without `--once` is the normal mode.** It stays subscribed
+over a websocket and runs the projection on a timer, so ledger activity — from
+this application or from anywhere else — appears in the UI within a couple of
+seconds. The `--once` variant backfills and exits, and is for scripted use only.
+
+The frontend polls every two seconds. Nothing needs clicking to refresh.
+
+First run:
+
+```bash
+npm run reset && npm run seed
+```
 
 ---
 
