@@ -22,6 +22,7 @@
  */
 import { getBalanceChanges } from 'xrpl'
 import { pool, query } from '../db/pool.js'
+import { credentialFrom, applyCredential } from './credentials.js'
 
 interface EventRow {
   tx_hash: string
@@ -77,6 +78,17 @@ export async function project(opts: { verbose?: boolean } = {}) {
       // but changed no balances. skip them.
       if (ev.tx_result !== 'tesSUCCESS') {
         skipped++
+        continue
+      }
+
+      // Credential events change no balances, so they must be handled
+      // separately. This is the whole point of keeping ledger_events a
+      // faithful log: new interpretations can be added and replayed
+      // without re-fetching anything.
+      const cred = credentialFrom(ev.raw.tx)
+      if (cred) {
+        await applyCredential(client, cred, ledgerIndex)
+        applied++
         continue
       }
 
@@ -143,6 +155,7 @@ export async function project(opts: { verbose?: boolean } = {}) {
  */
 export async function rebuild(opts: { verbose?: boolean } = {}) {
   await pool.query('truncate holdings')
+  await pool.query('truncate credentials')
   await pool.query(
     `update sync_state set last_projected_ledger = 0, last_projected_tx = 0 where id = 1`,
   )

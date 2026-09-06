@@ -97,11 +97,11 @@ export function registerWrites(app: FastifyInstance) {
         idempotencyKey: `approve:${req.params.id}`,
       })
 
-      await query(
-        `update investors set kyc_status = 'approving', kyc_approved = now()
-          where investor_id = $1`,
-        [req.params.id],
-      )
+      // Deliberately NOT writing an optimistic 'approving' status here.
+      // In-flight state lives in `intents`; kyc_status is derived from
+      // the credential projection once the ledger confirms. Writing it
+      // early would be the registry claiming a state the ledger has not
+      // reached — the exact drift this system exists to prevent.
 
       return accepted(reply, intent)
     },

@@ -77,12 +77,29 @@ app.get<{ Params: { assetId: string } }>(
 // ---------------------------------------------------------------
 
 app.get('/api/investors', async () => {
+  // kyc_status is DERIVED from the credential projection, not read from
+  // the investors table. The stored column can disagree with the ledger;
+  // the projection cannot. See MANUAL section 10.
+  //
+  // 'issued' is a real state, not a synonym for approved: an issued but
+  // unaccepted credential grants no domain membership, so the holder
+  // cannot trade.
   return query(`
-    select investor_id, legal_name, email, account, kyc_status,
-           kyc_submitted, kyc_approved, credential_accepted_at
-      from investors
-     where kyc_status <> 'system'
-     order by investor_id
+    select i.investor_id, i.legal_name, i.email, i.account,
+           i.kyc_submitted,
+           c.issued_at   as kyc_issued,
+           c.accepted_at as credential_accepted_at,
+           c.revoked_at  as kyc_revoked,
+           case
+             when c.revoked_at  is not null then 'revoked'
+             when c.accepted_at is not null then 'approved'
+             when c.issued_at   is not null then 'issued'
+             else 'pending'
+           end as kyc_status
+      from investors i
+      left join credentials c on c.subject = i.account
+     where i.kyc_status <> 'system'
+     order by i.investor_id
   `)
 })
 

@@ -81,6 +81,77 @@ async function ledgerBalances(
   return out
 }
 
+/**
+ * Compare the credential projection against the ledger.
+ *
+ * Added after a real failure: Carol's registry row said "approved"
+ * while the ledger held an unaccepted credential, meaning she was not
+ * a domain member and could not trade. Nothing detected it, because
+ * the reconciler only checked balances.
+ */
+async function reconcileCredentials(client: any): Promise<Finding[]> {
+  const out: Finding[] = []
+
+  const rows = await query<{
+    subject: string; issuer: string; credential_type: string
+    accepted_at: string | null; revoked_at: string | null
+  }>(`select subject, issuer, credential_type, accepted_at, revoked_at
+        from credentials`)
+
+  const LSF_ACCEPTED = 0x00010000
+
+  for (const row of rows) {
+    let onLedger: any = null
+    try {
+      const res: any = await client.request({
+        command: 'account_objects',
+        account: row.subject,
+        type: 'credential',
+        ledger_index: 'validated',
+      })
+      onLedger = (res.result.account_objects ?? []).find(
+        (o: any) => o.Issuer === row.issuer &&
+                    o.CredentialType === row.credential_type,
+      ) ?? null
+    } catch {
+      continue
+    }
+
+    const projectedLive = !row.revoked_at
+    const ledgerLive = onLedger !== null
+
+    if (projectedLive !== ledgerLive) {
+      out.push({
+        currency: 'CREDENTIAL', issuer: row.issuer, account: row.subject,
+        ledgerValue: ledgerLive ? 1 : 0,
+        registryValue: projectedLive ? 1 : 0,
+        severity: 'critical',
+        note: ledgerLive
+          ? 'ledger has a credential the projection records as revoked'
+          : 'projection has a credential the ledger does not',
+      })
+      continue
+    }
+
+    if (!ledgerLive) continue
+
+    const ledgerAccepted = (onLedger.Flags & LSF_ACCEPTED) !== 0
+    const projectedAccepted = row.accepted_at !== null
+
+    if (ledgerAccepted !== projectedAccepted) {
+      out.push({
+        currency: 'CREDENTIAL', issuer: row.issuer, account: row.subject,
+        ledgerValue: ledgerAccepted ? 1 : 0,
+        registryValue: projectedAccepted ? 1 : 0,
+        severity: 'critical',
+        note: 'acceptance state disagrees — an unaccepted credential grants no domain membership',
+      })
+    }
+  }
+
+  return out
+}
+
 export async function reconcile(opts: { verbose?: boolean; record?: boolean } = {}) {
   const record = opts.record !== false
   const client = await connect()
@@ -170,6 +241,8 @@ export async function reconcile(opts: { verbose?: boolean; record?: boolean } = 
         })
       }
     }
+
+    findings.push(...await reconcileCredentials(client))
 
     if (record) {
       // Close out anything that was drifting and no longer is. Without

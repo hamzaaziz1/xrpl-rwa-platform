@@ -167,3 +167,35 @@ create table if not exists account_sequences (
   next_sequence int not null,
   updated_at    timestamptz not null default now()
 );
+
+-- ============================================================
+-- CREDENTIALS: projected from ledger events, never written
+-- directly.
+--
+-- This exists because kyc_status was previously a column the
+-- application wrote, which meant it could disagree with the ledger
+-- and nothing would notice. Balances were projected from day one;
+-- credentials were not, and that inconsistency caused every KYC bug
+-- in this project.
+--
+-- Two-sided by protocol design: an issuer creates a credential and
+-- the subject must separately accept it. An issued-but-unaccepted
+-- credential grants no domain membership, so `accepted_at` is the
+-- field that actually matters for eligibility.
+-- ============================================================
+create table if not exists credentials (
+  subject          text not null,
+  issuer           text not null,
+  credential_type  text not null,   -- hex, as it appears on-ledger
+
+  issued_at        timestamptz,
+  issued_ledger    bigint,
+  accepted_at      timestamptz,
+  accepted_ledger  bigint,
+  revoked_at       timestamptz,
+  revoked_ledger   bigint,
+
+  primary key (subject, issuer, credential_type)
+);
+
+create index if not exists credentials_subject_idx on credentials (subject);
