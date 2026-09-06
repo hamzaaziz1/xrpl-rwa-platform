@@ -37,6 +37,12 @@ create table if not exists holdings (
   balance            numeric not null default 0,
   last_ledger_index  bigint  not null default 0,
   last_tx_index      int     not null default 0,
+
+  -- projected from TrustSet tfSetFreeze / tfClearFreeze, not written
+  -- directly. a frozen holder keeps their balance and cannot move it.
+  frozen             boolean not null default false,
+  frozen_ledger      bigint,
+
   primary key (currency, issuer, account)
 );
 

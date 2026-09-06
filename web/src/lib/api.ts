@@ -47,6 +47,7 @@ export interface Asset {
 export interface Holding {
   account: string
   balance: string
+  frozen: boolean
   last_ledger_index: string
   investor_id: string | null
   legal_name: string | null

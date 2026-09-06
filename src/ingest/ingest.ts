@@ -20,6 +20,7 @@ import { Client } from 'xrpl'
 import { connect } from '../xrpl-client.js'
 import { pool, query } from '../db/pool.js'
 import { normalize, type NormalizedTx } from './normalize.js'
+import { project } from './project.js'
 
 /** Accounts to watch: the issuer, plus every investor we know about. */
 export async function watchedAccounts(): Promise<string[]> {
@@ -164,8 +165,18 @@ export async function runIngest(opts: { once?: boolean } = {}) {
     return
   }
 
+  // Apply anything the backfill brought in, then keep the projection
+  // moving. Ingest writes the log; projection interprets it. They are
+  // separate so the projection can be rebuilt independently, but in
+  // normal running both should advance without anyone asking.
+  await project()
+
   live = true
   console.log('live. ctrl-c to stop.\n')
+
+  setInterval(() => {
+    project().catch(e => console.error('projection failed:', e?.message ?? e))
+  }, 2000)
 }
 
 // run directly: `npm run ingest`

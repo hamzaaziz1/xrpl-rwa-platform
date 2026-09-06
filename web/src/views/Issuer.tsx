@@ -82,12 +82,16 @@ export function IssuerView({ platform }: { platform: Snapshot & { refresh: () =>
                 <Td mono>{shortAddr(inv.account)}</Td>
                 <Td><Status value={inv.kyc_status} /></Td>
                 <Td right>
-                  <Button
-                    disabled={busy === inv.investor_id || inv.kyc_status === 'approving'}
-                    onClick={() => act(inv.investor_id, () => api.approve(inv.investor_id))}
-                  >
-                    Approve
-                  </Button>
+                  {liveFor(inv.account ?? '') ? (
+                    <span className="text-xs text-amber-700">submitting…</span>
+                  ) : (
+                    <Button
+                      disabled={busy === inv.investor_id}
+                      onClick={() => act(inv.investor_id, () => api.approve(inv.investor_id))}
+                    >
+                      Approve
+                    </Button>
+                  )}
                 </Td>
               </tr>
             ))}
@@ -103,8 +107,15 @@ export function IssuerView({ platform }: { platform: Snapshot & { refresh: () =>
             {holdings.map(h => {
               const live = liveFor(h.account)
               return (
-                <tr key={h.account}>
-                  <Td>{h.legal_name ?? '—'}</Td>
+                <tr key={h.account} className={h.frozen ? 'bg-red-50' : ''}>
+                  <Td>
+                    {h.legal_name ?? '—'}
+                    {h.frozen && (
+                      <span className="ml-2 border border-red-300 bg-red-50 px-1.5 py-0.5 text-xs text-red-800">
+                        frozen
+                      </span>
+                    )}
+                  </Td>
                   <Td mono>{shortAddr(h.account)}</Td>
                   <Td right>{units(h.balance)}</Td>
                   <Td right>
@@ -114,18 +125,21 @@ export function IssuerView({ platform }: { platform: Snapshot & { refresh: () =>
                       </span>
                     ) : (
                       <div className="flex justify-end gap-2">
-                        <Button
-                          disabled={busy === h.account}
-                          onClick={() => act(h.account, () => api.freeze(asset.asset_id, h.account))}
-                        >
-                          Freeze
-                        </Button>
-                        <Button
-                          disabled={busy === h.account}
-                          onClick={() => act(h.account, () => api.unfreeze(asset.asset_id, h.account))}
-                        >
-                          Unfreeze
-                        </Button>
+                        {h.frozen ? (
+                          <Button
+                            disabled={busy === h.account}
+                            onClick={() => act(h.account, () => api.unfreeze(asset.asset_id, h.account))}
+                          >
+                            Unfreeze
+                          </Button>
+                        ) : (
+                          <Button
+                            disabled={busy === h.account}
+                            onClick={() => act(h.account, () => api.freeze(asset.asset_id, h.account))}
+                          >
+                            Freeze
+                          </Button>
+                        )}
                         <Button
                           danger
                           disabled={busy === h.account || Number(h.balance) <= 0}

@@ -59,7 +59,7 @@ app.get<{ Params: { assetId: string } }>(
     if (!asset) return reply.code(404).send({ error: 'unknown asset' })
 
     return query(`
-      select h.account, h.balance, h.last_ledger_index,
+      select h.account, h.balance, h.frozen, h.last_ledger_index,
              i.investor_id, i.legal_name, i.kyc_status
         from holdings h
         left join investors i on i.account = h.account

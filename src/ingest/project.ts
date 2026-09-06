@@ -81,6 +81,36 @@ export async function project(opts: { verbose?: boolean } = {}) {
         continue
       }
 
+      // Freeze is a TrustSet from the issuer carrying tfSetFreeze or
+      // tfClearFreeze. It changes no balances, so like credentials it
+      // has to be handled separately.
+      //
+      // DIRECTION: on this TrustSet, `LimitAmount.issuer` is the HOLDER
+      // being frozen, not the token issuer. The signer is the issuer.
+      const tx = ev.raw.tx
+      if (tx?.TransactionType === 'TrustSet' && typeof tx.Flags === 'number') {
+        const SET_FREEZE = 0x00100000
+        const CLEAR_FREEZE = 0x00200000
+        const setting = (tx.Flags & SET_FREEZE) !== 0
+        const clearing = (tx.Flags & CLEAR_FREEZE) !== 0
+
+        if ((setting || clearing) && tx.LimitAmount?.issuer) {
+          await client.query(
+            `insert into holdings
+               (currency, issuer, account, balance, frozen, frozen_ledger,
+                last_ledger_index, last_tx_index)
+             values ($1, $2, $3, 0, $4, $5, $6, $7)
+             on conflict (currency, issuer, account) do update
+               set frozen = excluded.frozen,
+                   frozen_ledger = excluded.frozen_ledger`,
+            [tx.LimitAmount.currency, tx.Account, tx.LimitAmount.issuer,
+             setting, setting ? ledgerIndex : null, ledgerIndex, ev.tx_index],
+          )
+          applied++
+          continue
+        }
+      }
+
       // Credential events change no balances, so they must be handled
       // separately. This is the whole point of keeping ledger_events a
       // faithful log: new interpretations can be added and replayed
