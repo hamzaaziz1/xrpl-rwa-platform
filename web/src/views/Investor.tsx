@@ -2,22 +2,27 @@
  * Investor view.
  *
  * Deliberately the thinnest of the three. An investor holds units and
- * sees their own position — they don't operate anything. Padding this
- * out with features would misrepresent what the role actually does.
+ * sees their own position — they don't operate anything.
+ *
+ * The one action available here is accepting a credential, and that is
+ * the point: XRPL credentials are two-sided. The verifier issues one,
+ * and the subject must sign their own acceptance. Nobody can attach an
+ * attribute to your account without your consent.
  */
 import { useState } from 'react'
+import { api } from '../lib/api'
 import type { Snapshot } from '../lib/store'
-import {
-  shortAddr, units, explorerAccount,
-} from '../lib/format'
-import { Panel, Table, Td, Status, Empty } from '../components/ui'
+import { shortAddr, units, explorerAccount } from '../lib/format'
+import { Panel, Table, Td, Status, Button, Empty } from '../components/ui'
 
-export function InvestorView({ platform }: { platform: Snapshot }) {
+export function InvestorView({ platform }: { platform: Snapshot & { refresh?: () => void } }) {
   const { assets, holdings, investors } = platform
   const asset = assets[0]
 
   const realInvestors = investors.filter(i => i.kyc_status !== 'system')
   const [selected, setSelected] = useState<string | null>(null)
+  const [accepting, setAccepting] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
 
   const me = realInvestors.find(i => i.investor_id === selected) ?? realInvestors[0]
   const myHolding = holdings.find(h => h.account === me?.account)
@@ -28,6 +33,25 @@ export function InvestorView({ platform }: { platform: Snapshot }) {
   const mine = Number(myHolding?.balance ?? 0)
   const share = outstanding > 0 ? (mine / outstanding) * 100 : 0
 
+  // derived from the credential projection, not a stored column
+  const issued = me.kyc_status === 'issued' || me.kyc_status === 'approved'
+  const accepted = me.kyc_status === 'approved'
+  const revoked = me.kyc_status === 'revoked'
+  const canAccept = me.kyc_status === 'issued'
+
+  async function acceptCredential() {
+    setAccepting(true)
+    setErr(null)
+    try {
+      await api.acceptCredential(me.investor_id)
+      platform.refresh?.()
+    } catch (e: any) {
+      setErr(e?.message ?? String(e))
+    } finally {
+      setAccepting(false)
+    }
+  }
+
   return (
     <div className="space-y-6">
 
@@ -35,7 +59,7 @@ export function InvestorView({ platform }: { platform: Snapshot }) {
         <span className="text-neutral-500">Viewing as</span>
         <select
           value={me.investor_id}
-          onChange={e => setSelected(e.target.value)}
+          onChange={e => { setSelected(e.target.value); setErr(null) }}
           className="border border-neutral-300 bg-white px-2 py-1 text-sm"
         >
           {realInvestors.map(i => (
@@ -48,6 +72,12 @@ export function InvestorView({ platform }: { platform: Snapshot }) {
           (no authentication — see README)
         </span>
       </div>
+
+      {err && (
+        <div className="border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800">
+          {err}
+        </div>
+      )}
 
       <Panel title="Your position" subtitle={asset.title}>
         <dl className="grid grid-cols-3 gap-6 text-sm">
@@ -63,12 +93,8 @@ export function InvestorView({ platform }: { platform: Snapshot }) {
             <dt className="text-xs text-neutral-500">Account</dt>
             <dd className="mt-1 font-mono text-xs">
               {me.account ? (
-                  <a
-                    href={explorerAccount(me.account)}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="underline decoration-neutral-300 hover:decoration-neutral-600"
-                >
+                <a href={explorerAccount(me.account)} target="_blank" rel="noreferrer"
+                   className="underline decoration-neutral-300 hover:decoration-neutral-600">
                   {shortAddr(me.account, 10)}
                 </a>
               ) : '—'}
@@ -80,30 +106,68 @@ export function InvestorView({ platform }: { platform: Snapshot }) {
       <Panel
         title="Eligibility"
         subtitle="Trading is restricted to holders of an accepted KYC credential"
+        right={
+          <Status value={
+            revoked ? 'revoked' : accepted ? 'approved' : issued ? 'issued' : 'pending'
+          } />
+        }
       >
         <Table head={['Stage', 'Status', 'When']}>
           <tr>
             <Td>Application submitted</Td>
             <Td><Status value={me.kyc_submitted ? 'confirmed' : 'pending'} /></Td>
-            <Td>{me.kyc_submitted ? new Date(me.kyc_submitted).toLocaleString('en-GB') : '—'}</Td>
+            <Td>
+              {me.kyc_submitted
+                ? new Date(me.kyc_submitted).toLocaleString('en-GB')
+                : '—'}
+            </Td>
           </tr>
+
           <tr>
             <Td>Credential issued by verifier</Td>
-            <Td><Status value={me.kyc_approved ? 'confirmed' : 'pending'} /></Td>
-            <Td>{me.kyc_approved ? new Date(me.kyc_approved).toLocaleString('en-GB') : '—'}</Td>
+            <Td><Status value={issued ? 'confirmed' : 'pending'} /></Td>
+            <Td>
+              {(me as any).kyc_issued
+                ? new Date((me as any).kyc_issued).toLocaleString('en-GB')
+                : issued ? 'on ledger' : 'awaiting issuer approval'}
+            </Td>
           </tr>
+
           <tr>
             <Td>Credential accepted by you</Td>
-            <Td><Status value={me.credential_accepted_at ? 'confirmed' : 'pending'} /></Td>
-            <Td>{me.credential_accepted_at ? new Date(me.credential_accepted_at).toLocaleString('en-GB') : '—'}</Td>
+            <Td><Status value={accepted ? 'confirmed' : 'pending'} /></Td>
+            <Td>
+              {accepted ? (
+                me.credential_accepted_at
+                  ? new Date(me.credential_accepted_at).toLocaleString('en-GB')
+                  : 'on ledger'
+              ) : canAccept ? (
+                <Button disabled={accepting} onClick={acceptCredential}>
+                  {accepting ? 'submitting…' : 'Accept credential'}
+                </Button>
+              ) : '—'}
+            </Td>
           </tr>
         </Table>
+
+        {canAccept && (
+          <p className="mt-4 border-l-2 border-amber-400 bg-amber-50 py-2 pl-3 text-xs leading-relaxed text-amber-900">
+            A credential has been issued to this account but not yet accepted.
+            Until it is, the account is <strong>not</strong> a member of the
+            permissioned domain and cannot trade. Accepting requires a signature
+            from this account, not the issuer.
+          </p>
+        )}
 
         <p className="mt-4 border-l-2 border-neutral-300 pl-3 text-xs leading-relaxed text-neutral-600">
           Credentials on the XRP Ledger are two-sided: the verifier issues one,
           and the subject must separately accept it. An issued but unaccepted
           credential does not grant domain membership, so all three stages must
           complete before this account can trade.
+          <br /><br />
+          This status is derived from the credential projection — the ledger's
+          own record of what exists — rather than a status column the
+          application writes.
         </p>
       </Panel>
 

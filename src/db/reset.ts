@@ -13,7 +13,10 @@ await pool.query(`
   drop table if exists
     reconciliation_findings,
     holdings,
+    credentials,
     ledger_events,
+    intents,
+    account_sequences,
     sync_state,
     investors,
     assets

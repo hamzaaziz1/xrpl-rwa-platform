@@ -94,7 +94,11 @@ export function registerWrites(app: FastifyInstance) {
         kind: 'credential_issue',
         actor: kyc,
         params: { subject: investor.account, credentialType: KYC_CREDENTIAL },
-        idempotencyKey: `approve:${req.params.id}`,
+        // Keyed on the credential that doesn't exist yet rather than a
+        // fixed string. A constant key means an investor can be approved
+        // exactly once ever — a revoke followed by re-approval would
+        // silently return the old intent.
+        idempotencyKey: `approve:${req.params.id}:${Date.now()}`,
       })
 
       // Deliberately NOT writing an optimistic 'approving' status here.
