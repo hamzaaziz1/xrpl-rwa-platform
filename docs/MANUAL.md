@@ -6,7 +6,7 @@ to this after months away — including me.
 Updated at each build stage. If something here contradicts the code, the code
 is right and this is stale; open an issue.
 
-**Last updated:** stage 3 complete (API reads and writes, async write path)
+**Last updated:** stage 4 — three views, credentials projected.
 
 ---
 
@@ -580,6 +580,13 @@ into one, and negating the issuer's balance gives total units outstanding.
 Whenever a trust line field looks wrong, ask which side you are reading from
 before assuming the data is bad.
 
+**An empty POST body with `content-type: application/json` is a 400.** Fastify's
+default parser rejects it before the handler runs, with
+`FST_ERR_CTP_EMPTY_JSON_BODY`. Several endpoints legitimately take no body, so
+the API registers a parser that treats an empty body as `{}`. The client also
+omits the header when there is no body. Either fix alone is sufficient; both are
+in place because any client can make this mistake.
+
 **Clawback clamps to the available balance — it does not fail on over-request.**
 Asking to claw back 99999 from a holder with 400 units takes 400 and returns
 `tesSUCCESS`. Sensible for court-ordered recovery, but it means any UI must show
@@ -618,3 +625,78 @@ Any hardcoded address will eventually stop existing.
 - **[xrpl-why](https://github.com/hamzaaziz1/xrpl-why)** — diagnoses failed
   XRPL transactions by inspecting ledger state. Used in this platform so UI
   errors give real reasons instead of `tec` codes.
+
+---
+
+## 10. Credentials are projected, not stored
+
+`investors.kyc_status` used to be a column the API wrote. It could disagree with
+the ledger, nothing detected it, and nothing repaired it. Balances were projected
+from day one; credentials were not, and that single inconsistency caused every
+KYC bug in this project.
+
+Fixed. Credentials are now derived from the event log the same way balances are.
+
+### How it works
+
+`src/ingest/credentials.ts` reads `CredentialCreate`, `CredentialAccept` and
+`CredentialDelete` out of `ledger_events` and maintains the `credentials` table.
+The API derives `kyc_status` from that table; nothing writes it.
+
+| Derived status | Meaning |
+|---|---|
+| `pending` | No credential on the ledger |
+| `issued` | Credential exists but the subject has **not** accepted it — **not a domain member, cannot trade** |
+| `approved` | Issued and accepted |
+| `revoked` | Deleted |
+
+`issued` is a real state, not a synonym for approved. Collapsing it loses the
+distinction that actually governs eligibility.
+
+### The direction trap, fifth instance
+
+The three credential transactions name the subject differently:
+
+| Transaction | Submitted by | Subject is |
+|---|---|---|
+| `CredentialCreate` | Issuer | `Subject` |
+| `CredentialDelete` | Either party | `Subject`, falling back to `Account` |
+| `CredentialAccept` | **Subject** | `Account`, with `Issuer` separate |
+
+Reading `Subject` on an Accept gives `undefined`, and the acceptance silently
+attaches to nothing. Same family as `authorized` vs `peer_authorized` — see §8.
+
+### What it caught immediately
+
+On its first run the projection showed Carol's credential as **issued but not
+accepted**. The stored column had said `approved` for days. She had never been a
+domain member and could not have traded.
+
+The registry had been claiming a state that was never true on the ledger, and
+nothing detected it because the reconciler only checked balances.
+
+### The reconciler now checks credentials
+
+Both existence and acceptance state, in both directions:
+
+| Situation | Means |
+|---|---|
+| Ledger has a credential the projection calls revoked | Missed a `CredentialCreate` |
+| Projection has one the ledger doesn't | Missed a `CredentialDelete` |
+| Acceptance state disagrees | Missed a `CredentialAccept` — the holder cannot trade |
+
+Verified by deliberately setting `accepted_at` on an unaccepted credential and
+watching it flag CRITICAL, then repairing with `npm run project -- --rebuild`.
+
+### No optimistic writes
+
+`POST /api/investors/:id/approve` no longer writes an `approving` status. In-flight
+state already lives in `intents`; duplicating it in the registry would be the
+registry claiming a state the ledger has not reached.
+
+### Known imperfection
+
+`applyCredential` stamps `issued_at` / `accepted_at` with `now()` — when the event
+was *processed*, not when it happened on-ledger. The `_ledger` columns are
+accurate. A faithful projection should use the ledger close time, and this should
+be fixed.

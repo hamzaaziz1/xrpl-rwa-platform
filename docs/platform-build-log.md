@@ -541,4 +541,223 @@ judgement; polish on a demo reads as compensating for something.
 
 ---
 
+---
+
+## day 8 — three views
+
+built the frontend. vite, react, typescript, and deliberately plain — no
+gradients, no floating cards, no dashboard aesthetic. a regulated-finance
+internal tool should look like one.
+
+one global two-second poll feeding all three views, rather than each action
+polling its own intent. one timer, one snapshot, and everything updates
+together. it also makes the demo read better: things visibly resolve on their
+own while you're looking at them.
+
+every transaction hash links to testnet.xrpl.org. anyone reviewing this can
+verify every claim against the actual ledger instead of trusting my screen.
+
+three things i'm pleased with:
+
+**the clawback confirmation shows the holder's balance and explains that
+clawback clamps.** that warning exists because i found the behaviour yesterday,
+not because it's good practice in the abstract.
+
+**the eligibility panel has three stages, not two** — submitted, issued,
+accepted — with a note explaining that credentials are two-sided. that's the
+day-two finding surfaced as a product decision. most implementations would
+collapse it to a boolean and show approved users as rejected.
+
+**failure reasons get their own column.** a confirmed operation tells you it
+worked; a failed one tells you what went wrong and how to fix it. the failure
+carries strictly more information, so it gets at least as much room.
+
+---
+
+## day 8 — an hour lost to an empty body
+
+clicking Approve gave a browser alert saying "Bad Request". curl to the same
+endpoint returned 202.
+
+i guessed twice and was wrong twice. then i turned on fastify's logger and it
+said it outright:
+
+```
+FST_ERR_CTP_EMPTY_JSON_BODY
+Body cannot be empty when content-type is set to 'application/json'
+```
+
+the approve endpoint takes no body. my API client set the content-type header
+anyway. fastify tried to parse an empty string as JSON and returned 400 before
+the handler ever ran. curl didn't set the header, so it never happened there.
+
+two lessons.
+
+**turn the logs on first.** i spent twenty minutes inferring from symptoms when
+the server already knew the answer and was willing to say it.
+
+**that alert was terrible.** "Bad Request" tells an operator nothing — on a
+project whose entire argument is that errors should carry real reasons. i built
+`xrpl-why` for exactly this and then wrote `alert(e.message)` in my own UI.
+
+---
+
+## day 8 — the gap i built and didn't notice
+
+then a worse one, and it's architectural.
+
+after approving carol, she sat on `approving` forever. the credential confirmed
+on-ledger. nothing moved her to `approved`.
+
+because **`kyc_status` is a column i write, and `holdings.balance` is projected
+from ledger events.** one of those can drift from reality. the other can't.
+
+i built the correct pattern on day 4 for balances and then didn't apply it to
+credentials.
+
+it got worse. i reset her status to `pending` in the database to retest, which
+did nothing to the on-ledger credential. the next approval returned
+`tecDUPLICATE` — the ledger correctly reporting the credential already exists.
+
+so: the registry said pending, the ledger said approved, and only the registry
+was wrong. that is precisely the drift this entire system exists to detect, in
+the one place i didn't apply the pattern.
+
+the reconciler didn't catch it either, because it only checks balances.
+
+---
+
+## day 8 — what i'm going to do about it
+
+the patch is to treat `tecDUPLICATE` as success, since it means the desired end
+state already exists. that stops the immediate bleeding and is genuinely
+correct.
+
+the fix is projection. credentials become a table derived from
+`CredentialCreate`, `CredentialAccept` and `CredentialDelete` events — all of
+which ingest already stores. `kyc_status` becomes derived rather than written.
+the optimistic `approving` write disappears entirely, because in-flight state
+already lives in `intents`. and the reconciler gets extended to check
+credentials the same way it checks balances.
+
+two or three hours, and it touches the most tested part of the system, so it
+wants a clear head rather than the end of a long evening.
+
+what bothers me is that if someone asks "why is balance projected but KYC status
+stored?", the honest answer right now is "i ran out of time." that's a weaker
+answer than the rest of this deserves.
+
+writing it into the manual as a known gap tonight, and fixing it tomorrow.
+
+---
+
+---
+
+## day 9 — closing the gap
+
+spent the morning making credentials work the way balances already did.
+
+a `credentials` table, thirty lines of projection reading `CredentialCreate`,
+`CredentialAccept` and `CredentialDelete` out of the event log, and `kyc_status`
+derived rather than written.
+
+the part that still slightly amazes me: **i built that table from history without
+touching the ledger.** the events were already in `ledger_events` from days ago.
+adding a new interpretation and replaying was the entire migration.
+
+that's the third time the day-4 decision has paid off. keep the log faithful,
+keep everything downstream disposable, and changing how you interpret history
+costs nothing.
+
+---
+
+## day 9 — the fifth direction trap
+
+the three credential transactions name the subject differently:
+
+```
+CredentialCreate   submitted by the ISSUER   -> subject is `Subject`
+CredentialDelete   submitted by either       -> `Subject`, falling back to `Account`
+CredentialAccept   submitted by the SUBJECT  -> subject is `Account`, `Issuer` separate
+```
+
+read `Subject` on an Accept and you get undefined, and the acceptance silently
+attaches to nothing.
+
+i saw this one coming. not because i'm getting better at XRPL, but because i
+wrote the rule down on day 4 and now check for it by reflex: **a trust line — or
+a credential — is a relationship, and every field describes a direction within
+it.**
+
+five instances now. `authorized` vs `peer_authorized`. freeze on which side.
+`issuer` meaning counterparty. `account_lines` rows keyed by the other party.
+and now this.
+
+---
+
+## day 9 — what the projection found on its first run
+
+```
+subject   issued  accepted  revoked
+alice     t       t         f
+bob       t       t         f
+carol     t       f         f
+```
+
+**carol has never been eligible.**
+
+her credential was issued and never accepted. on XRPL that means no domain
+membership, which means she couldn't have traded. the stored `kyc_status` column
+had said `approved` for two days.
+
+the registry was claiming a state that was never true on the ledger. nothing
+detected it, because the reconciler only checked balances.
+
+i built this projection to fix an inconsistency i'd noticed, and it immediately
+surfaced a second one i hadn't. that's the argument for derived state in a single
+example — not "it's cleaner", but "the stored version was lying and i didn't
+know."
+
+---
+
+## day 9 — extending the reconciler
+
+it now checks credentials as well as balances. existence in both directions, and
+acceptance state.
+
+then the test that matters, because an alarm you've never seen fire is untested:
+
+```
+update credentials set accepted_at = now() where subject = carol
+npm run reconcile
+  [CRITICAL] acceptance state disagrees — an unaccepted credential
+             grants no domain membership
+
+npm run project -- --rebuild
+npm run reconcile
+  no drift
+```
+
+i deliberately put the projection into exactly the state the stored column had
+been in for two days, and it was caught in one run.
+
+---
+
+## where this leaves the system
+
+every piece of state the ledger knows about is projected from the event log.
+nothing is optimistically written. the reconciler checks all of it, in both
+directions. repair is always replay.
+
+the approve endpoint no longer writes an `approving` status — in-flight state
+lives in `intents`, and duplicating it in the registry was the original mistake
+in miniature.
+
+one imperfection left, noted in the manual: the projection stamps timestamps with
+`now()` rather than the ledger close time, so `issued_at` records when i
+processed the event rather than when it happened. the ledger index columns are
+correct. a faithful projection shouldn't have that gap.
+
+---
+
 *continues.*
