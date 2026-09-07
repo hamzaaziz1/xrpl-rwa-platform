@@ -3,6 +3,9 @@ import Fastify from 'fastify'
 import cors from '@fastify/cors'
 import { query, pool } from '../db/pool.js'
 import { registerWrites } from './writes.js'
+import fastifyStatic from '@fastify/static'
+import { fileURLToPath } from 'node:url'
+import { dirname, join } from 'node:path'
 
 const app = Fastify({ logger: false })
 await app.register(cors, { origin: true })
@@ -144,6 +147,27 @@ app.get<{ Querystring: { limit?: string } }>('/api/events', async (req) => {
 })
 
 app.get('/api/health', async () => ({ ok: true }))
+
+// ---------------------------------------------------------------
+// Serve the built frontend from the same origin as the API.
+//
+// One service, one domain, and the client and API can never disagree
+// about versions. Registered last so it cannot shadow API routes.
+// ---------------------------------------------------------------
+
+const here = dirname(fileURLToPath(import.meta.url))
+const publicDir = join(here, '../../public')
+
+await app.register(fastifyStatic, { root: publicDir })
+
+// SPA fallback: anything not under /api serves index.html, so
+// client-side routing survives a refresh.
+app.setNotFoundHandler((req, reply) => {
+  if (req.url.startsWith('/api')) {
+    return reply.code(404).send({ error: 'not found' })
+  }
+  return reply.sendFile('index.html')
+})
 
 const port = Number(process.env.PORT ?? 3001)
 await app.listen({ port, host: '0.0.0.0' })
