@@ -67,7 +67,7 @@ export function registerWrites(app: FastifyInstance) {
     async (req) => {
       const limit = Math.min(Number(req.query.limit ?? 30), 100)
       return query(
-        `select intent_id, kind, actor, status, tx_hash, engine_result,
+        `select intent_id, kind, actor, params, status, tx_hash, engine_result,
                 failure_reason, created_at, resolved_at
            from intents order by created_at desc limit $1`,
         [limit],

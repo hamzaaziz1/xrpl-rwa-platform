@@ -69,6 +69,7 @@ export interface Intent {
   intent_id: string
   kind: string
   actor: string
+  params?: Record<string, any>
   status: 'pending' | 'submitted' | 'confirmed' | 'failed' | 'expired' | 'abandoned'
   tx_hash: string | null
   engine_result: string | null
