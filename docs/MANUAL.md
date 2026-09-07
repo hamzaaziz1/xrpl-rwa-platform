@@ -6,7 +6,7 @@ to this after months away — including me.
 Updated at each build stage. If something here contradicts the code, the code
 is right and this is stale; open an issue.
 
-**Last updated:** stage 4 — three views, credentials and freeze projected.
+**Last updated:** stage 5 — deployed.
 
 ---
 
@@ -542,6 +542,66 @@ npm run reset && npm run seed
 
 ---
 
+## 13. Deployment
+
+Live on Railway. Four Railway services:
+
+| Service | Start command | Public |
+|---|---|---|
+| `Postgres` | managed | no |
+| `Api` | `npm run api` | yes, port 3001 |
+| `Ingest` | `npm run ingest` | no |
+| `Worker` | `npm run worker` | no |
+
+`Ingest` and `Worker` hold long-running connections and expose no HTTP, so they
+need no domain. They are separate services on purpose: if the worker crashes,
+ingest keeps recording ledger events. Running them in one process means a single
+failure takes out both, and "if the API dies the intent survives" stops being
+true.
+
+### The frontend is served by the API
+
+Railway's free plan allows four services, and Postgres plus three processes uses
+all of them. Rather than pay for a fifth or host the frontend separately, the
+root `Dockerfile` builds the frontend in a first stage and copies `dist/` into
+the backend image, where `@fastify/static` serves it.
+
+One origin for the app and the API. The client and API can never disagree about
+versions, and there is no CORS configuration to get wrong.
+
+`VITE_API_URL` is set to `""` at build time, so the client calls relative paths
+against whatever origin served it. **Vite bakes environment variables in at build
+time, not runtime** — setting it as a runtime variable has no effect.
+
+The static handler and SPA fallback are registered **after** all API routes.
+Registered earlier, the not-found handler would shadow them.
+
+### Environment
+
+| Variable | Value |
+|---|---|
+| `DATABASE_URL` | `${{Postgres.DATABASE_URL}}` — a Railway reference, so no password is ever pasted |
+| `XRPL_NETWORK` | `testnet` |
+| `PORT` | `3001` (API only) |
+
+### First deploy
+
+Schema and seed run from the Railway console on the API service:
+
+```bash
+npm run migrate
+npm run seed
+```
+
+### Known limitation
+
+Testnet accounts do not persist indefinitely, and the seed funds fresh ones each
+run. A deployed demo will eventually reference accounts that no longer exist and
+need reseeding. This is not automated on purpose — building a data lifecycle for
+a demo is effort spent in the wrong place.
+
+---
+
 ## 6. Custody
 
 The backend holds investor private keys and signs on their behalf.
@@ -632,6 +692,25 @@ default parser rejects it before the handler runs, with
 the API registers a parser that treats an empty body as `{}`. The client also
 omits the header when there is no body. Either fix alone is sufficient; both are
 in place because any client can make this mistake.
+
+**Local request state and ledger state are different things.** A button that
+disables on click and re-enables when the POST returns is unguarded: the request
+returns in milliseconds, the ledger takes seconds. Buttons must stay disabled
+until an intent for that account leaves `pending`/`submitted` in the polled
+state, not until the fetch resolves. This caused three separate double-submission
+bugs before the pattern was recognised.
+
+**A guard that never matches looks identical to no guard.** `liveFor` searched
+intent JSON for an account address, but `GET /api/intents` did not return
+`params` — so the address was never in the JSON and the guard silently never
+fired. No error, no symptom, just a button that stayed clickable. Same shape as
+the reconciler that only checked balances: the check existed and covered less
+than it appeared to.
+
+**"The UI has not caught up" and "it did not work" look identical for two
+seconds.** Poll interval plus ledger validation means roughly five to ten seconds
+between an action and its visible result. Check the database before concluding
+something is broken.
 
 **Clawback clamps to the available balance — it does not fail on over-request.**
 Asking to claw back 99999 from a holder with 400 units takes 400 and returns

@@ -39,6 +39,14 @@ export function InvestorView({ platform }: { platform: Snapshot & { refresh?: ()
   const revoked = me.kyc_status === 'revoked'
   const canAccept = me.kyc_status === 'issued'
 
+  // An intent for this account that hasn't resolved yet. Local `accepting`
+  // state clears when the POST returns, which is long before the ledger
+  // has done anything — so the button would become clickable again mid-flight.
+  const inFlight = platform.intents.find(
+    i => (i.status === 'pending' || i.status === 'submitted') &&
+         JSON.stringify(i).includes(me.account ?? '\u0000'),
+  )
+
   async function acceptCredential() {
     setAccepting(true)
     setErr(null)
@@ -141,6 +149,8 @@ export function InvestorView({ platform }: { platform: Snapshot & { refresh?: ()
                 me.credential_accepted_at
                   ? new Date(me.credential_accepted_at).toLocaleString('en-GB')
                   : 'on ledger'
+              ) : inFlight ? (
+                <span className="text-xs text-amber-700">submitting…</span>
               ) : canAccept ? (
                 <Button disabled={accepting} onClick={acceptCredential}>
                   {accepting ? 'submitting…' : 'Accept credential'}

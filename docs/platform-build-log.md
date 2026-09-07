@@ -866,4 +866,102 @@ explains why they can't trade.
 
 ---
 
+---
+
+## day 10 — deployed
+
+it's on the internet. one URL, real testnet data, no localhost.
+
+that's the difference between something i demo and something i send. a link
+someone can open on their phone.
+
+railway, four services: postgres, api, ingest, worker. the last two hold
+long-running websockets to the ledger and expose no HTTP, which is the
+constraint that rules out most serverless hosting — i couldn't have put this on
+vercel.
+
+kept them as three separate processes rather than merging them into one. the
+argument is the same one from day 6: if the worker dies, ingest keeps recording
+ledger events. merge them and a single failure takes out both, and "if the API
+dies the intent survives" stops being true. that sentence was the whole
+justification for the intents table, so collapsing the processes to save
+resources would have quietly undone it.
+
+---
+
+## day 10 — the frontend problem
+
+free plan allows four services. postgres plus three processes is four. no room
+for the frontend.
+
+three options: host it separately on vercel, pay for a fifth service, or serve
+it from the API.
+
+took the third. the root Dockerfile now builds the frontend in a first stage and
+copies `dist/` into the backend image, where fastify serves it. one origin for
+the app and the API, no CORS to configure, and the client and API can never
+disagree about versions.
+
+it slightly cuts against the separation argument — the API now has two jobs. but
+serving static assets isn't a process concern, it's the same HTTP server doing
+one extra thing. the processes that could fail independently still do.
+
+one thing i'd have got wrong without checking: **vite bakes environment
+variables in at build time, not runtime.** setting `VITE_API_URL` as a railway
+runtime variable does nothing. it has to be present when `npm run build` runs,
+which is why it's an ENV in the docker build stage.
+
+---
+
+## day 10 — three bugs that were one bug
+
+spent a while chasing buttons that didn't lock during submission.
+
+**first**: the approve button had a guard that never fired. `liveFor` searched
+intent JSON for the investor's address, but `GET /api/intents` didn't select
+`params` — so the address was never in the JSON. no error, no symptom, just a
+button that stayed clickable.
+
+that's the same shape as the reconciler that only checked balances. **the check
+existed and covered less than it appeared to.** those are harder to find than
+crashes, because there's nothing to notice until someone double-clicks.
+
+**second**: the accept-credential button used local `accepting` state, which
+clears when the POST returns. the POST returns in milliseconds; the ledger takes
+seconds. so it was unguarded for most of the actual operation.
+
+the underlying rule, which i now think is the real lesson: **local request state
+and ledger state are different things.** a button should follow the second. the
+fetch resolving tells you the server accepted your intent, not that anything
+happened.
+
+**third**: chasing a bug that wasn't there. carol showed `issued` after i clicked
+accept, so i assumed the guard had failed again. the intent had confirmed, the
+projection had updated, the database was correct — the page just hadn't polled
+yet.
+
+five to ten seconds between an action and its visible result, and "the UI hasn't
+caught up" looks exactly like "it didn't work". i've now been caught by that
+twice and should check the database before concluding anything is broken.
+
+---
+
+## where this is
+
+**xrpl-rwa-cookbook** — six scripts, the full compliance arc, one command.
+**xrpl-why** — published to npm, five integration tests, no mocks.
+**xrpl-rwa-platform** — deployed, three views, projected state, reconciled both
+directions, async writes with an audit trail.
+**an article** on the five causes of `tecPATH_DRY`.
+
+ten days from no XRPL experience.
+
+what's left is small: ledger close timestamps instead of `now()`, freeze state
+in the investor view, and a README that explains what this is to someone opening
+the link cold. that last one probably matters most now — the code is done, and
+the thing standing between it and a good first impression is thirty lines of
+prose at the top of a repo.
+
+---
+
 *continues.*
