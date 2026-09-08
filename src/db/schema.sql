@@ -59,6 +59,7 @@ create table if not exists assets (
   document_hash  text,
   jurisdiction   text,
   total_units    numeric,
+  domain_id      text,          -- permissioned domain gating this asset
   status         text not null default 'active'
 );
 
@@ -205,3 +206,41 @@ create table if not exists credentials (
 );
 
 create index if not exists credentials_subject_idx on credentials (subject);
+
+-- ============================================================
+-- OFFERS: projected from the ledger, never written directly.
+--
+-- An OfferCreate that doesn't fully cross leaves an Offer object
+-- on the ledger. That is state, so it is derived like everything
+-- else.
+--
+-- The subtlety: an offer can be consumed by SOMEONE ELSE'S
+-- transaction. That produces no event from the offer owner's
+-- account, so a projection built only from the owner's activity
+-- would show offers that no longer exist. The crossing
+-- transaction's metadata records the deletion — the projection
+-- reads DeletedNode entries for Offer objects, not just
+-- transaction types.
+-- ============================================================
+create table if not exists offers (
+  account          text   not null,
+  sequence         int    not null,   -- the OfferCreate's sequence; identifies it
+
+  -- what the offer is selling / buying, normalised to the asset
+  side             text   not null,   -- 'ask' (selling units) | 'bid' (buying units)
+  currency         text   not null,
+  issuer           text   not null,
+  units            numeric not null,  -- amount of the asset
+  xrp_drops        numeric not null,  -- the XRP side, in drops
+
+  domain_id        text,              -- null = open book
+  created_ledger   bigint not null,
+  closed_ledger    bigint,            -- consumed or cancelled
+  closed_reason    text,              -- 'filled' | 'cancelled' | 'unknown'
+
+  primary key (account, sequence)
+);
+
+create index if not exists offers_open_idx
+  on offers (currency, issuer, side)
+  where closed_ledger is null;

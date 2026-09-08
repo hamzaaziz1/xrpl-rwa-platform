@@ -23,6 +23,7 @@
 import { getBalanceChanges } from 'xrpl'
 import { pool, query } from '../db/pool.js'
 import { credentialFrom, applyCredential } from './credentials.js'
+import { offerFrom, offersDeletedBy, offerCancelledBy, offerRested, applyOffer, closeOffer } from './offers.js'
 
 interface EventRow {
   tx_hash: string
@@ -78,6 +79,35 @@ export async function project(opts: { verbose?: boolean } = {}) {
       // but changed no balances. skip them.
       if (ev.tx_result !== 'tesSUCCESS') {
         skipped++
+        continue
+      }
+
+      // ---- offers -------------------------------------------------
+      // Creations first, then deletions. An OfferCreate that fully
+      // crosses on submission appears in its OWN metadata as a deleted
+      // Offer, so handling deletions first would try to close a row
+      // that does not exist yet.
+      const newOffer = offerFrom(ev.raw.tx)
+      if (newOffer && offerRested(ev.raw.meta, newOffer.account, newOffer.sequence)) {
+        await applyOffer(client, newOffer, ledgerIndex)
+      }
+
+      const cancelled = offerCancelledBy(ev.raw.tx)
+      if (cancelled) {
+        await closeOffer(client, cancelled.account, cancelled.sequence,
+                         ledgerIndex, 'cancelled')
+      }
+
+      // Deletions from metadata, whoever submitted the transaction.
+      // This is how an offer consumed by someone else's trade gets
+      // closed — its owner submitted nothing.
+      for (const d of offersDeletedBy(ev.raw.meta)) {
+        await closeOffer(client, d.account, d.sequence, ledgerIndex,
+                         cancelled ? 'cancelled' : 'filled')
+      }
+
+      if (newOffer || cancelled) {
+        applied++
         continue
       }
 
@@ -186,6 +216,7 @@ export async function project(opts: { verbose?: boolean } = {}) {
 export async function rebuild(opts: { verbose?: boolean } = {}) {
   await pool.query('truncate holdings')
   await pool.query('truncate credentials')
+  await pool.query('truncate offers')
   await pool.query(
     `update sync_state set last_projected_ledger = 0, last_projected_tx = 0 where id = 1`,
   )

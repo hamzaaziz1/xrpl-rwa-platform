@@ -150,13 +150,14 @@ console.log('\n=== registry ===')
 
 await pool.query(
   `insert into assets
-     (asset_id, currency, issuer, title, external_ref, jurisdiction, total_units)
-   values ($1, $2, $3, $4, $5, $6, $7)
+     (asset_id, currency, issuer, title, external_ref, jurisdiction, total_units, domain_id)
+   values ($1, $2, $3, $4, $5, $6, $7, $8)
    on conflict (asset_id) do update
-     set currency = excluded.currency,
-         issuer   = excluded.issuer`,
+     set currency  = excluded.currency,
+         issuer    = excluded.issuer,
+         domain_id = excluded.domain_id`,
   [ASSET_ID, CURRENCY, issuer.address,
-   '12 Marina Walk, Unit 4B', 'DLD-2026-004471', 'AE-DU', 500],
+   '12 Marina Walk, Unit 4B', 'DLD-2026-004471', 'AE-DU', 500, domainId],
 )
 console.log(`  asset ${ASSET_ID}`)
 
