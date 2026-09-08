@@ -964,4 +964,118 @@ prose at the top of a repo.
 
 ---
 
+---
+
+## day 11 — the secondary market
+
+the obvious gap: one asset, created by a seed script, and the only way anyone
+got units was the seed doing it for them. no way to trade through the UI.
+
+split into two features, and the second is the one that matters. "add an asset"
+is registry work. "approved investors trade a restricted asset among
+themselves" is what the whole system is about, and it was only ever proven by a
+seed script.
+
+did it properly rather than a buy button: limit offers both sides, a real order
+book, cancellation.
+
+**offers are ledger objects, so they get projected** like everything else.
+`OfferCreate` carrying a `DomainID` only matches offers carrying the same
+domain, so a non-member's offer can never cross it. they're not rejected at
+trade time — they were never in the same book.
+
+the API also checks membership before creating an intent. the ledger would
+refuse anyway, but that answer arrives eight seconds later as
+`tecNO_PERMISSION`. carol tried to bid and got back:
+
+```
+not a member of the permissioned domain — an accepted, unrevoked
+credential is required to trade
+```
+
+immediately, in a sentence she could act on.
+
+---
+
+## day 11 — two things about offers i had to find out
+
+**an offer can be closed by someone else's transaction.** when bob's offer
+crosses alice's resting one, alice's is deleted and alice submitted nothing. a
+projection built from each account's own transactions would keep showing offers
+that don't exist.
+
+the deletion is in the *crossing* transaction's metadata as a `DeletedNode`. so
+the projection reads deletions from metadata regardless of who submitted. same
+lesson as the reconciler in a new place: **your own actions are not the only
+thing that changes your state.**
+
+that one i designed for. the next one i didn't.
+
+**an offer that crosses fully never rests.** first test run left a phantom: bob's
+bid sitting open in my projection, and `account_offers` on the ledger returning
+an empty array.
+
+his offer crossed completely on submission, so it never became a ledger object.
+no `CreatedNode`, and no `DeletedNode` ever coming because nothing was created.
+i was recording it and waiting forever for a deletion.
+
+**the projection was manufacturing exactly the drift the reconciler exists to
+catch.** fix was to check for the `CreatedNode` before inserting — if it didn't
+rest, there's nothing to track.
+
+---
+
+## day 11 — the reconciler found a bug i'd written an hour earlier
+
+placed alice's ask, had bob cross it, checked the balances. alice 500, bob
+absent.
+
+but both intents said `tesSUCCESS`. alice's ask showed `filled`. the trade had
+clearly happened.
+
+ran the reconciler, mostly out of habit:
+
+```
+2 finding(s):
+  [CRITICAL] r4mexxnVcfbN... PRP
+    ledger 350 vs projection 500
+  [CRITICAL] rpeyVqFXQFtP... PRP
+    ledger has a balance the projection never recorded
+      — likely a missed event
+```
+
+the ledger said 350. my projection said 500. and the second finding named the
+cause outright.
+
+the bug: my offer-handling block ended with `continue`, which skipped the
+balance-change code below it. **an OfferCreate that crosses is both an offer
+event and a set of balance changes**, and i was handling one and dropping the
+other.
+
+nothing errored. every transaction succeeded. the trade was real on the ledger.
+only the projection was wrong — which is precisely the case where nothing else
+would have told me.
+
+what i want to record is that **a component i built two weeks ago for a
+different purpose caught a regression in code i'd written an hour earlier,
+unprompted, and diagnosed it correctly.** i wasn't testing the reconciler. i was
+debugging, reached for it, and it just answered.
+
+that's the claim the readme makes about this system, demonstrated on itself. i
+couldn't have staged a better example if i'd tried.
+
+---
+
+## where this leaves it
+
+alice 350, bob 150, book empty, no drift. a full secondary market trade between
+two approved investors, initiated through the API, with a non-member refused at
+the boundary.
+
+next is the UI for it — order book in the investor view, place and cancel,
+hidden from non-members so the eligibility gate is the thing you actually see
+rather than a market you can look at but not enter.
+
+---
+
 *continues.*

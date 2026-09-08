@@ -6,7 +6,7 @@ to this after months away — including me.
 Updated at each build stage. If something here contradicts the code, the code
 is right and this is stale; open an issue.
 
-**Last updated:** stage 5 — deployed.
+**Last updated:** stage 6 — permissioned secondary market.
 
 ---
 
@@ -602,6 +602,51 @@ a demo is effort spent in the wrong place.
 
 ---
 
+## 14. The secondary market
+
+Approved investors place limit offers against each other on a permissioned order
+book. `src/ingest/offers.ts` projects the book from the event log; the write
+path adds `offer_create` and `offer_cancel` intents.
+
+### What makes it permissioned
+
+`OfferCreate` carries a `DomainID`. Offers only ever match other offers carrying
+the same domain, so they live in a different book from the open market. A
+non-member is not rejected at trade time — **they were never in the same market**.
+
+`assets.domain_id` holds it, written by the seed when the domain is created.
+
+The API also checks membership before creating an intent. The ledger would
+reject a non-member anyway, but that answer arrives eight seconds later as
+`tecNO_PERMISSION`. Failing at the boundary gives the user a sentence they can
+act on.
+
+### Three things about projecting offers
+
+**An offer can be closed by someone else's transaction.** When a crossing
+`OfferCreate` consumes a resting offer, the owner submitted nothing. The deletion
+is recorded in the *crossing* transaction's metadata as a `DeletedNode` of type
+`Offer`, so the projection reads deletions from metadata regardless of who
+submitted. Same lesson as the reconciler: your own actions are not the only thing
+that changes your state.
+
+**An offer that crosses fully never rests.** There is no `CreatedNode`, and there
+will never be a `DeletedNode` because nothing was created. Recording it anyway
+leaves a row that can never be closed — the projection showing an open offer the
+ledger has no knowledge of. `offerRested()` checks for the `CreatedNode` before
+inserting.
+
+**An `OfferCreate` that trades is both an offer event and a set of balance
+changes.** The offer-handling block must **not** `continue` — falling through to
+the balance-change code is required. See §8.
+
+### Order book
+
+`GET /api/assets/:id/book` returns open offers split into asks and bids, asks
+sorted cheapest first and bids highest first.
+
+---
+
 ## 6. Custody
 
 The backend holds investor private keys and signs on their behalf.
@@ -692,6 +737,13 @@ default parser rejects it before the handler runs, with
 the API registers a parser that treats an empty body as `{}`. The client also
 omits the header when there is no body. Either fix alone is sufficient; both are
 in place because any client can make this mistake.
+
+**A `continue` in the projection silently drops everything below it.** An
+`OfferCreate` that crosses is both an offer event and a set of balance changes.
+Handling the offer and `continue`-ing skipped every executed trade — no error,
+every intent `tesSUCCESS`, the trade real on the ledger, only the projection
+wrong. The reconciler caught it unprompted and named the cause: "ledger has a
+balance the projection never recorded — likely a missed event."
 
 **Local request state and ledger state are different things.** A button that
 disables on click and re-enables when the POST returns is unguarded: the request
