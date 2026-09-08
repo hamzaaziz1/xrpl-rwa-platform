@@ -40,6 +40,8 @@ export type IntentKind =
   | 'freeze'
   | 'unfreeze'
   | 'clawback'
+  | 'offer_create'
+  | 'offer_cancel'
 
 export interface CreateIntent {
   kind: IntentKind
@@ -171,6 +173,30 @@ function buildTx(intent: IntentRow): any {
         // NOTE: `issuer` here is the HOLDER. On a Clawback the issuer
         // names whose balance to reach into. Two-sided objects again.
         Amount: { currency: p.currency, issuer: p.holder, value: p.value },
+      }
+
+    case 'offer_create':
+      // Signed by the investor. The DomainID is what makes this a
+      // permissioned offer: it will only ever match other offers
+      // carrying the same domain, so a non-member's offer cannot
+      // cross it — they are not in the same book at all.
+      return {
+        TransactionType: 'OfferCreate',
+        Account: intent.actor,
+        TakerGets: p.side === 'ask'
+          ? { currency: p.currency, issuer: p.issuer, value: String(p.units) }
+          : String(p.xrpDrops),
+        TakerPays: p.side === 'ask'
+          ? String(p.xrpDrops)
+          : { currency: p.currency, issuer: p.issuer, value: String(p.units) },
+        ...(p.domainId ? { DomainID: p.domainId } : {}),
+      }
+
+    case 'offer_cancel':
+      return {
+        TransactionType: 'OfferCancel',
+        Account: intent.actor,
+        OfferSequence: Number(p.offerSequence),
       }
 
     default:

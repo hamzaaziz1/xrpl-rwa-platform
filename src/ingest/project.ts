@@ -106,10 +106,13 @@ export async function project(opts: { verbose?: boolean } = {}) {
                          cancelled ? 'cancelled' : 'filled')
       }
 
-      if (newOffer || cancelled) {
-        applied++
-        continue
-      }
+      // NOTE: no `continue` here. An OfferCreate that crosses is BOTH
+      // an offer event AND a set of balance changes. Skipping the
+      // balance code below drops every trade that executes on
+      // submission — the reconciler caught exactly that.
+      //
+      // OfferCancel moves no balances, so falling through is harmless:
+      // getBalanceChanges simply returns nothing.
 
       // Freeze is a TrustSet from the issuer carrying tfSetFreeze or
       // tfClearFreeze. It changes no balances, so like credentials it

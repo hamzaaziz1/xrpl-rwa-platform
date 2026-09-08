@@ -172,6 +172,142 @@ export function registerWrites(app: FastifyInstance) {
     },
   )
 
+  // ---- place a permissioned offer --------------------------------
+  //
+  // Signed by the investor. Membership is checked here rather than
+  // letting the ledger reject it: the ledger's answer is correct but
+  // takes eight seconds and arrives as tecNO_PERMISSION.
+  app.post<{
+    Params: { assetId: string }
+    Body: { investorId: string; side: 'ask' | 'bid'; units: string; xrpDrops: string }
+  }>(
+    '/api/assets/:assetId/offers',
+    async (req, reply) => {
+      const [asset] = await query<{ currency: string; issuer: string; domain_id: string | null }>(
+        `select currency, issuer, domain_id from assets where asset_id = $1`,
+        [req.params.assetId],
+      )
+      if (!asset) return reply.code(404).send({ error: 'unknown asset' })
+
+      const { investorId, side, units, xrpDrops } = req.body ?? ({} as any)
+      if (!investorId || !side || !units || !xrpDrops) {
+        return reply.code(400).send({ error: 'investorId, side, units and xrpDrops required' })
+      }
+      if (side !== 'ask' && side !== 'bid') {
+        return reply.code(400).send({ error: "side must be 'ask' or 'bid'" })
+      }
+      if (Number(units) <= 0 || Number(xrpDrops) <= 0) {
+        return reply.code(400).send({ error: 'units and xrpDrops must be positive' })
+      }
+
+      const [investor] = await query<{ account: string }>(
+        `select account from investors where investor_id = $1`, [investorId],
+      )
+      if (!investor?.account) return reply.code(404).send({ error: 'unknown investor' })
+
+      const [cred] = await query<{ accepted_at: string | null; revoked_at: string | null }>(
+        `select accepted_at, revoked_at from credentials where subject = $1`,
+        [investor.account],
+      )
+      if (!cred?.accepted_at || cred.revoked_at) {
+        return reply.code(403).send({
+          error: 'not a member of the permissioned domain — an accepted, unrevoked credential is required to trade',
+        })
+      }
+
+      if (side === 'ask') {
+        const [holding] = await query<{ balance: string; frozen: boolean }>(
+          `select balance, frozen from holdings
+            where currency = $1 and issuer = $2 and account = $3`,
+          [asset.currency, asset.issuer, investor.account],
+        )
+        if (holding?.frozen) {
+          return reply.code(403).send({ error: 'this holding is frozen and cannot be sold' })
+        }
+        if (Number(holding?.balance ?? 0) < Number(units)) {
+          return reply.code(400).send({
+            error: `insufficient units: holds ${holding?.balance ?? 0}, offered ${units}`,
+          })
+        }
+      }
+
+      const intent = await create({
+        kind: 'offer_create',
+        actor: investor.account,
+        params: {
+          side, units, xrpDrops,
+          currency: asset.currency,
+          issuer: asset.issuer,
+          domainId: asset.domain_id,
+        },
+        idempotencyKey: `offer:${investor.account}:${Date.now()}`,
+      })
+
+      return accepted(reply, intent)
+    },
+  )
+
+  // ---- cancel your own offer -------------------------------------
+  app.post<{ Body: { investorId: string; sequence: number } }>(
+    '/api/offers/cancel',
+    async (req, reply) => {
+      const { investorId, sequence } = req.body ?? ({} as any)
+      if (!investorId || sequence == null) {
+        return reply.code(400).send({ error: 'investorId and sequence required' })
+      }
+
+      const [investor] = await query<{ account: string }>(
+        `select account from investors where investor_id = $1`, [investorId],
+      )
+      if (!investor?.account) return reply.code(404).send({ error: 'unknown investor' })
+
+      const [offer] = await query(
+        `select 1 from offers
+          where account = $1 and sequence = $2 and closed_ledger is null`,
+        [investor.account, sequence],
+      )
+      if (!offer) return reply.code(404).send({ error: 'no open offer with that sequence' })
+
+      const intent = await create({
+        kind: 'offer_cancel',
+        actor: investor.account,
+        params: { offerSequence: sequence },
+        idempotencyKey: `cancel:${investor.account}:${sequence}`,
+      })
+
+      return accepted(reply, intent)
+    },
+  )
+
+  // ---- the order book --------------------------------------------
+  app.get<{ Params: { assetId: string } }>(
+    '/api/assets/:assetId/book',
+    async (req, reply) => {
+      const [asset] = await query<{ currency: string; issuer: string }>(
+        `select currency, issuer from assets where asset_id = $1`,
+        [req.params.assetId],
+      )
+      if (!asset) return reply.code(404).send({ error: 'unknown asset' })
+
+      const offers = await query(`
+        select o.account, o.sequence, o.side, o.units, o.xrp_drops,
+               o.created_ledger, i.legal_name, i.investor_id
+          from offers o
+          left join investors i on i.account = o.account
+         where o.currency = $1 and o.issuer = $2 and o.closed_ledger is null
+         order by o.side,
+                  case when o.side = 'ask'
+                       then o.xrp_drops / nullif(o.units, 0)
+                       else -(o.xrp_drops / nullif(o.units, 0)) end
+      `, [asset.currency, asset.issuer])
+
+      return {
+        asks: offers.filter((o: any) => o.side === 'ask'),
+        bids: offers.filter((o: any) => o.side === 'bid'),
+      }
+    },
+  )
+
   // ---- freeze / unfreeze a holder -------------------------------
   for (const action of ['freeze', 'unfreeze'] as const) {
     app.post<{ Params: { assetId: string }; Body: { holder: string } }>(
