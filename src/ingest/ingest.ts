@@ -212,6 +212,22 @@ export async function runIngest(opts: { once?: boolean } = {}) {
       console.error('sweep failed:', e?.message ?? e)
     }
   }, 30_000)
+
+  // Reconcile periodically. Nothing else invokes it in production, which
+  // meant the regulator panel could report "clean" from a check that last
+  // ran days earlier — honest, since no findings were open, but silent
+  // rather than verified.
+  setInterval(async () => {
+    try {
+      const { reconcile } = await import('../recon/reconcile.js')
+      const findings = await reconcile({ record: true, client })
+      if (findings.length > 0) {
+        console.log(`  reconciler: ${findings.length} finding(s)`)
+      }
+    } catch (e: any) {
+      console.error('reconcile failed:', e?.message ?? e)
+    }
+  }, 60_000)
 }
 
 // run directly: `npm run ingest`

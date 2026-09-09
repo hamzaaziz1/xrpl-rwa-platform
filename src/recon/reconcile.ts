@@ -219,9 +219,15 @@ async function reconcileOffers(client: any): Promise<Finding[]> {
   return out
 }
 
-export async function reconcile(opts: { verbose?: boolean; record?: boolean } = {}) {
+export async function reconcile(
+  opts: { verbose?: boolean; record?: boolean; client?: any } = {},
+) {
   const record = opts.record !== false
-  const client = await connect()
+  // Reuse a caller's connection when given one. The ingest runs this on a
+  // timer and is already connected; opening a second client every minute
+  // doubles the exposure to a cluster that refuses connections often.
+  const borrowed = !!opts.client
+  const client = opts.client ?? await connect()
   const findings: Finding[] = []
 
   try {
@@ -357,7 +363,7 @@ export async function reconcile(opts: { verbose?: boolean; record?: boolean } = 
 
     return findings
   } finally {
-    await client.disconnect()
+    if (!borrowed) await client.disconnect()
   }
 }
 

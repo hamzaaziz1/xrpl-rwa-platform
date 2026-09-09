@@ -9,7 +9,10 @@ export function networkUrl(): string {
 }
 
 export async function connect(): Promise<Client> {
-  const client = new Client(networkUrl())
+  // The public cluster refuses or stalls a meaningful share of
+  // connections. Five seconds (the default) is too tight and produces
+  // spurious failures in anything that connects on a timer.
+  const client = new Client(networkUrl(), { connectionTimeout: 20_000 })
   await client.connect()
   return client
 }
