@@ -13,7 +13,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import {
   api, type Asset, type Holding, type Investor,
-  type Intent, type Reconciliation,
+  type Intent, type Reconciliation, type Book,
 } from './api'
 
 const POLL_MS = 2000
@@ -24,6 +24,7 @@ export interface Snapshot {
   investors: Investor[]
   intents: Intent[]
   reconciliation: Reconciliation | null
+  book: Book | null
   loading: boolean
   error: string | null
 }
@@ -34,6 +35,7 @@ const EMPTY: Snapshot = {
   investors: [],
   intents: [],
   reconciliation: null,
+  book: null,
   loading: true,
   error: null,
 }
@@ -48,15 +50,16 @@ export function usePlatform() {
       const assetId = assetIdRef.current ?? assets[0]?.asset_id ?? null
       assetIdRef.current = assetId
 
-      const [holdings, investors, intents, reconciliation] = await Promise.all([
+      const [holdings, investors, intents, reconciliation, book] = await Promise.all([
         assetId ? api.holdings(assetId) : Promise.resolve([]),
         api.investors(),
         api.intents(),
         api.reconciliation(),
+        assetId ? api.book(assetId) : Promise.resolve(null),
       ])
 
       setSnap({
-        assets, holdings, investors, intents, reconciliation,
+        assets, holdings, investors, intents, reconciliation, book,
         loading: false, error: null,
       })
     } catch (e: any) {

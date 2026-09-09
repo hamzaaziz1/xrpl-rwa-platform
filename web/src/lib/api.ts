@@ -111,6 +111,22 @@ export interface LedgerEvent {
   ingested_at: string
 }
 
+export interface Offer {
+  account: string
+  sequence: number
+  side: 'ask' | 'bid'
+  units: string
+  xrp_drops: string
+  created_ledger: string
+  legal_name: string | null
+  investor_id: string | null
+}
+
+export interface Book {
+  asks: Offer[]
+  bids: Offer[]
+}
+
 // ---- reads -------------------------------------------------------
 
 export const api = {
@@ -121,6 +137,14 @@ export const api = {
   intent: (id: string) => get<Intent>(`/api/intents/${id}`),
   reconciliation: () => get<Reconciliation>('/api/reconciliation'),
   events: (limit = 50) => get<LedgerEvent[]>(`/api/events?limit=${limit}`),
+    book: (assetId: string) => get<Book>(`/api/assets/${assetId}/book`),
+
+  placeOffer: (assetId: string, body: {
+    investorId: string; side: 'ask' | 'bid'; units: string; xrpDrops: string
+  }) => post<{ intentId: string }>(`/api/assets/${assetId}/offers`, body),
+
+  cancelOffer: (investorId: string, sequence: number) =>
+    post<{ intentId: string }>('/api/offers/cancel', { investorId, sequence }),
 
   // ---- writes ----------------------------------------------------
   // all return 202 with an intent id; watch it via the poll store

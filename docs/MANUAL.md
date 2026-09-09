@@ -6,7 +6,7 @@ to this after months away — including me.
 Updated at each build stage. If something here contradicts the code, the code
 is right and this is stale; open an issue.
 
-**Last updated:** stage 6 — permissioned secondary market.
+**Last updated:** stage 6 — permissioned secondary market, order book UI.
 
 ---
 
@@ -645,6 +645,41 @@ the balance-change code is required. See §8.
 `GET /api/assets/:id/book` returns open offers split into asks and bids, asks
 sorted cheapest first and bids highest first.
 
+### The subscription is not reliable
+
+**This is the most important operational fact in this document.**
+
+Two offers placed through the UI confirmed on the ledger and never arrived over
+the websocket subscription. They were invisible to the projection until an
+unrelated process restart triggered the watermark backfill and picked them up.
+
+Nothing reported the gap. The live path only knows about events it received, so
+a dropped message is indistinguishable from no activity.
+
+Two changes followed:
+
+**A periodic sweep.** Every 30 seconds the ingest re-runs the `account_tx`
+backfill from the watermark. Duplicates cost nothing (`ON CONFLICT (tx_hash) DO
+NOTHING`), so the price is a few requests a minute and dropped messages become
+self-healing rather than permanent. Restarting the process is not an
+operational strategy — in production nobody restarts anything.
+
+**The reconciler checks offers.** Open offers in the projection are compared
+against `account_offers`, in both directions. The sweep heals this class of
+failure; the reconciler detects it.
+
+Do not treat the subscription as a source of truth. It is a latency optimisation
+over the backfill.
+
+### Trading UI
+
+The order book is shown **only to domain members**. A non-member sees the
+eligibility panel and nothing else — the compliance boundary should be the thing
+you encounter, not a market you can look at but cannot enter.
+
+Prices are entered as XRP per unit and converted to drops in the client, with the
+total shown alongside so there is no ambiguity about what is being agreed to.
+
 ---
 
 ## 6. Custody
@@ -737,6 +772,11 @@ default parser rejects it before the handler runs, with
 the API registers a parser that treats an empty body as `{}`. The client also
 omits the header when there is no body. Either fix alone is sufficient; both are
 in place because any client can make this mistake.
+
+**`npm run reset` must drop every table, including derived ones.** `offers`,
+`intents`, `credentials` and `account_sequences` were each missed at some point,
+leaving rows from a previous database that looked current and referenced accounts
+that no longer existed.
 
 **A `continue` in the projection silently drops everything below it.** An
 `OfferCreate` that crosses is both an offer event and a set of balance changes.

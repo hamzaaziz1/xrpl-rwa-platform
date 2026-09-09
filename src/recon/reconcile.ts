@@ -152,6 +152,73 @@ async function reconcileCredentials(client: any): Promise<Finding[]> {
   return out
 }
 
+/**
+ * Compare the offer projection against the ledger.
+ *
+ * Added after a real miss: two offers placed through the UI confirmed on
+ * the ledger and never arrived over the websocket subscription. They
+ * were invisible until an unrelated restart backfilled them, and nothing
+ * would have reported the gap.
+ *
+ * A periodic sweep now heals that class of failure. This detects it.
+ */
+async function reconcileOffers(client: any): Promise<Finding[]> {
+  const out: Finding[] = []
+
+  const accounts = await query<{ account: string }>(
+    `select distinct account from offers where closed_ledger is null
+     union
+     select account from investors where account is not null`,
+  )
+
+  for (const { account } of accounts) {
+    if (!account) continue
+
+    let live: Set<number>
+    try {
+      const res: any = await client.request({
+        command: 'account_offers',
+        account,
+        ledger_index: 'validated',
+      })
+      live = new Set((res.result.offers ?? []).map((o: any) => Number(o.seq)))
+    } catch {
+      continue
+    }
+
+    const projected = await query<{ sequence: number }>(
+      `select sequence from offers
+        where account = $1 and closed_ledger is null`,
+      [account],
+    )
+    const projectedSeqs = new Set(projected.map(r => Number(r.sequence)))
+
+    for (const seq of projectedSeqs) {
+      if (!live.has(seq)) {
+        out.push({
+          currency: 'OFFER', issuer: String(seq), account,
+          ledgerValue: 0, registryValue: 1,
+          severity: 'critical',
+          note: `projection shows offer ${seq} as open; the ledger does not have it`,
+        })
+      }
+    }
+
+    for (const seq of live) {
+      if (!projectedSeqs.has(seq)) {
+        out.push({
+          currency: 'OFFER', issuer: String(seq), account,
+          ledgerValue: 1, registryValue: 0,
+          severity: 'critical',
+          note: `ledger has open offer ${seq} the projection never recorded — likely a missed event`,
+        })
+      }
+    }
+  }
+
+  return out
+}
+
 export async function reconcile(opts: { verbose?: boolean; record?: boolean } = {}) {
   const record = opts.record !== false
   const client = await connect()
@@ -243,6 +310,7 @@ export async function reconcile(opts: { verbose?: boolean; record?: boolean } = 
     }
 
     findings.push(...await reconcileCredentials(client))
+    findings.push(...await reconcileOffers(client))
 
     if (record) {
       // Close out anything that was drifting and no longer is. Without

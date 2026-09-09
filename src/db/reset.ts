@@ -14,6 +14,7 @@ await pool.query(`
     reconciliation_findings,
     holdings,
     credentials,
+    offers,
     ledger_events,
     intents,
     account_sequences,

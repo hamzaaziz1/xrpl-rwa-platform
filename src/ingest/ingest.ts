@@ -177,6 +177,41 @@ export async function runIngest(opts: { once?: boolean } = {}) {
   setInterval(() => {
     project().catch(e => console.error('projection failed:', e?.message ?? e))
   }, 2000)
+
+  // PERIODIC BACKFILL.
+  //
+  // The websocket subscription is not reliable. Messages get dropped, and
+  // when they do the live path has no way to notice — it only knows about
+  // events it received. Restarting the process recovers them via the
+  // watermark backfill, which is fine in development and useless in
+  // production, where nobody restarts anything.
+  //
+  // So sweep account_tx from the watermark on a timer. Duplicates are
+  // free (ON CONFLICT DO NOTHING on tx_hash), so the only cost is a few
+  // requests a minute, and dropped messages become self-healing instead
+  // of permanent.
+  //
+  // Found the hard way: two offers placed through the UI confirmed on the
+  // ledger, never arrived over the subscription, and were invisible until
+  // an unrelated restart backfilled them.
+  setInterval(async () => {
+    try {
+      const from = await readWatermark()
+      let total = 0
+      let maxLedger = from
+      for (const account of accounts) {
+        const r = await backfillAccount(client, account, from)
+        total += r.written
+        if (r.maxLedger > maxLedger) maxLedger = r.maxLedger
+      }
+      if (total > 0) {
+        console.log(`  sweep recovered ${total} event(s) the subscription missed`)
+        await advanceWatermark(maxLedger)
+      }
+    } catch (e: any) {
+      console.error('sweep failed:', e?.message ?? e)
+    }
+  }, 30_000)
 }
 
 // run directly: `npm run ingest`

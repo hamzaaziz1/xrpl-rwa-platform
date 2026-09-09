@@ -1078,4 +1078,114 @@ rather than a market you can look at but not enter.
 
 ---
 
+---
+
+## day 12 — the order book, and the thing i found underneath it
+
+built the trading UI. place an offer, see the book, cancel your own. prices in
+XRP per unit rather than drops, because that's how a person thinks about a
+trade, with the total shown so there's no ambiguity about what you're agreeing
+to.
+
+the book renders **only for domain members**. carol sees her eligibility panel
+and nothing else. that was a deliberate call yesterday and i still think it's
+right: the compliance boundary should be the thing you encounter, not a market
+you can look at but can't enter.
+
+two accounts, same page, one sees a market and one doesn't, and the difference
+is a credential on the ledger. that's the demo.
+
+---
+
+## day 12 — offers that confirmed and vanished
+
+placed two asks through the UI. both intents confirmed, `tesSUCCESS`, real
+transaction hashes.
+
+book: empty.
+
+checked the ledger directly with `account_offers`. **both offers were sitting
+there.** resting, exactly as placed, sequences 20621508 and 20621509.
+
+so the ledger had them and my projection didn't. checked `ledger_events` — not
+there either. so it wasn't a projection bug, the ingest never recorded them.
+
+but the ingest was running. it was subscribed, it had recorded the credential
+events from minutes earlier, it was alive and working.
+
+restarted it out of desperation:
+
+```
+backfilling from ledger 20621712
+  rpYivAFhzygRh8AprnsUehG5zkNkhQ6BWf  2 new / 2 seen
+backfill complete: 2 new events
+```
+
+there they were.
+
+**the websocket subscription dropped them.** silently. the live path only knows
+about events it received, so a dropped message is indistinguishable from no
+activity at all.
+
+---
+
+## day 12 — why that's the worst bug so far
+
+everything else i've found this project was a logic error i could reason about.
+this one is different: the transport is unreliable and gives you no way to know.
+
+and the failure mode is nasty. the log was permanently incomplete, and would
+have stayed that way until someone restarted the process. i restarted it by
+accident, chasing something else.
+
+**in production nobody restarts anything.** the deployed ingest would have run
+for weeks quietly missing whatever the subscription dropped, and the projection
+would have looked internally consistent the entire time.
+
+which is exactly the failure the reconciler was built for — and it wasn't
+checking offers, so it wouldn't have caught this either.
+
+two fixes:
+
+**a periodic sweep.** every 30 seconds, re-run the backfill from the watermark.
+duplicates cost nothing because of the tx_hash conflict clause, so the price is
+a few requests a minute and dropped messages become self-healing instead of
+permanent.
+
+**the reconciler now checks offers**, both directions, against
+`account_offers`. tested it by deleting the projected rows:
+
+```
+[CRITICAL] ledger has open offer 20621508 the projection never
+           recorded — likely a missed event
+[CRITICAL] ledger has open offer 20621509 the projection never
+           recorded — likely a missed event
+```
+
+the exact situation from an hour earlier, now detected rather than silent.
+
+the sweep heals it. the reconciler reports it. i want both, because a
+self-healing system that never tells you it healed something is one where you
+never learn the transport is flaky.
+
+---
+
+## day 12 — what i'd say about this
+
+i've been writing "the subscription is not the source of truth" in the manual
+since day 4 as an architectural principle. today it stopped being a principle
+and became a thing that actually happened, with transaction hashes i could look
+up on an explorer.
+
+the design survived it. the watermark was correct, the backfill recovered
+everything, nothing was lost. but only because those existed — and they existed
+because i wrote them on day 4 for a gap i reasoned about rather than
+experienced.
+
+that's the argument for building the boring correctness machinery before you
+need it. i didn't get lucky today; i got the payoff from a decision made eight
+days earlier.
+
+---
+
 *continues.*

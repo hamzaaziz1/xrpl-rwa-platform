@@ -14,6 +14,7 @@ import { api } from '../lib/api'
 import type { Snapshot } from '../lib/store'
 import { shortAddr, units, explorerAccount } from '../lib/format'
 import { Panel, Table, Td, Status, Button, Empty } from '../components/ui'
+import { TradingPanel } from '../components/Trading'
 
 export function InvestorView({ platform }: { platform: Snapshot & { refresh?: () => void } }) {
   const { assets, holdings, investors } = platform
@@ -180,6 +181,22 @@ export function InvestorView({ platform }: { platform: Snapshot & { refresh?: ()
           application writes.
         </p>
       </Panel>
+
+      {accepted && asset && (
+        <TradingPanel
+          assetId={asset.asset_id}
+          currency={asset.currency}
+          me={{ investor_id: me.investor_id, account: me.account }}
+          myHolding={myHolding}
+          book={platform.book}
+          inFlightAccounts={new Set(
+            platform.intents
+              .filter(i => i.status === 'pending' || i.status === 'submitted')
+              .map(i => i.actor),
+          )}
+          onDone={() => platform.refresh?.()}
+        />
+      )}
 
       <Panel title="Register" subtitle="All holders of this asset">
         {holdings.length === 0 ? (
