@@ -13,6 +13,9 @@
 import type { FastifyInstance } from 'fastify'
 import { query } from '../db/pool.js'
 import { create, type IntentKind } from '../tx/submit.js'
+import { connect } from '../xrpl-client.js'
+import { createAsset } from '../assets/create.js'
+import { onboardInvestor } from '../assets/onboard.js'
 
 const toHex = (s: string) =>
   Buffer.from(s, 'utf8').toString('hex').toUpperCase()
@@ -169,6 +172,55 @@ export function registerWrites(app: FastifyInstance) {
       })
 
       return accepted(reply, intent)
+    },
+  )
+
+  // ---- create an asset -------------------------------------------
+  //
+  // Synchronous, unlike every other write here. See assets/create.ts for
+  // why: four ordered transactions where a partial result is permanently
+  // broken rather than retryable.
+  app.post<{
+    Body: {
+      assetId: string; currency: string; title: string
+      externalRef?: string; jurisdiction?: string; totalUnits: number
+    }
+  }>(
+    '/api/assets',
+    async (req, reply) => {
+      const client = await connect()
+      try {
+        const result = await createAsset(client, req.body)
+        return reply.code(201).send(result)
+      } catch (e: any) {
+        return reply.code(400).send({ error: e?.message ?? String(e) })
+      } finally {
+        await client.disconnect()
+      }
+    },
+  )
+
+  // ---- onboard an investor to an asset ---------------------------
+  app.post<{
+    Params: { assetId: string }
+    Body: { investorId: string; units?: string; limit?: string }
+  }>(
+    '/api/assets/:assetId/onboard',
+    async (req, reply) => {
+      const client = await connect()
+      try {
+        const result = await onboardInvestor(client, {
+          assetId: req.params.assetId,
+          investorId: req.body?.investorId,
+          units: req.body?.units,
+          limit: req.body?.limit,
+        })
+        return reply.code(201).send(result)
+      } catch (e: any) {
+        return reply.code(400).send({ error: e?.message ?? String(e) })
+      } finally {
+        await client.disconnect()
+      }
     },
   )
 

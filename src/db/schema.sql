@@ -60,6 +60,15 @@ create table if not exists assets (
   jurisdiction   text,
   total_units    numeric,
   domain_id      text,          -- permissioned domain gating this asset
+
+  -- Each asset gets its OWN issuer account. Issuer controls are
+  -- account-scoped, not currency-scoped: a global freeze or a
+  -- RequireAuth setting applies to everything that account issues.
+  -- Sharing one issuer would mean a court order against one property
+  -- freezing the others. Testnet seeds only — see MANUAL section 6.
+  issuer_seed    text,
+
+  created_at     timestamptz not null default now(),
   status         text not null default 'active'
 );
 

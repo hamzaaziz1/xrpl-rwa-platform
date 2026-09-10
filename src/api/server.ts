@@ -30,8 +30,14 @@ registerWrites(app)
 // ---------------------------------------------------------------
 
 app.get('/api/assets', async () => {
+  // Explicit column list, never `a.*`. The assets table holds
+  // `issuer_seed`, and a wildcard select puts a private key on a public
+  // endpoint. Testnet keys controlling nothing, but the habit is what
+  // matters.
   return query(`
-    select a.*,
+    select a.asset_id, a.currency, a.issuer, a.title, a.external_ref,
+           a.document_hash, a.jurisdiction, a.total_units, a.domain_id,
+           a.status, a.created_at,
            coalesce(-i.balance, 0) as units_outstanding,
            (select count(*) from holdings h
              where h.currency = a.currency
