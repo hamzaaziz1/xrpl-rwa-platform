@@ -6,7 +6,7 @@ to this after months away — including me.
 Updated at each build stage. If something here contradicts the code, the code
 is right and this is stale; open an issue.
 
-**Last updated:** stage 6 complete — secondary market, unattended reconciliation.
+**Last updated:** stage 7 — multi-asset.
 
 ---
 
@@ -723,6 +723,55 @@ repaired it.
 
 ---
 
+## 15. Multi-asset
+
+Assets are created through the API, each with its **own issuer account and its
+own permissioned domain**.
+
+### Why not share an issuer
+
+Issuer controls on XRPL are **account-scoped, not currency-scoped**:
+
+- a global freeze freezes everything that account issues
+- `RequireAuth` applies to every currency it issues
+- so does `AllowTrustLineClawback`
+
+Share one issuer across assets and a court order against one property freezes
+the others. Each asset therefore gets a dedicated account, and a dedicated
+domain for the same reason one level up: eligibility for one property should not
+imply eligibility for another.
+
+### Two synchronous writes, deliberately
+
+`POST /api/assets` and `POST /api/assets/:id/onboard` run inline rather than
+through the intents machinery. This is a considered exception, not an oversight.
+
+**Asset creation** is four ordered transactions: clawback, require-auth,
+default-ripple, domain. `AllowTrustLineClawback` cannot be enabled once trust
+lines exist, so an issuer that got require-auth but not clawback is *permanently*
+unable to gain it. A partial result is not a retryable state, it is a broken
+account.
+
+**Onboarding** is three transactions across **two different signers** — the
+investor opens the trust line, the issuer authorises it and sends units. The
+worker orders intents per account, which is not sufficient when the dependency
+crosses accounts. Building a dependency graph for a three-step bootstrap is the
+wrong trade.
+
+Both take 15–20 seconds. A spinner is a better answer than a half-initialised
+issuer or a half-onboarded investor.
+
+The async intents path remains correct for everything ongoing: issuance, freeze,
+clawback, credentials, offers. The distinction is bootstrap versus operation.
+
+### Onboarding enforces eligibility and the ceiling
+
+An investor with no accepted credential cannot be allocated units — they could
+not trade them. And the issue ceiling is checked against units already
+outstanding, derived from the issuer's negated balance.
+
+---
+
 ## 6. Custody
 
 The backend holds investor private keys and signs on their behalf.
@@ -813,6 +862,11 @@ default parser rejects it before the handler runs, with
 the API registers a parser that treats an empty body as `{}`. The client also
 omits the header when there is no body. Either fix alone is sufficient; both are
 in place because any client can make this mistake.
+
+**`select *` leaks columns added later.** `/api/assets` used `select a.*`. When
+`issuer_seed` was added to that table an hour before, the endpoint began serving
+a private key on a public route — nobody touched the endpoint, and it started
+leaking anyway. Always an explicit column list on anything public.
 
 **`npm run reset` must drop every table, including derived ones.** `offers`,
 `intents`, `credentials` and `account_sequences` were each missed at some point,

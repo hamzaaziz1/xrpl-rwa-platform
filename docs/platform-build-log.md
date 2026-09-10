@@ -1303,4 +1303,95 @@ smoke alarm with a lighter. this was a real fire, and i wasn't in the room.
 
 ---
 
+---
+
+## day 13 — multi-asset, done the correct way
+
+asset creation was the last obvious gap: one property, created by a seed script,
+no way to add another.
+
+the decision that shaped the work: **each asset gets its own issuer account.**
+
+i'd initially planned to reuse the existing issuer — an afternoon rather than a
+day. the reason not to is that **issuer controls on XRPL are account-scoped, not
+currency-scoped.** a global freeze freezes everything that account issues.
+`RequireAuth` applies to every currency it issues. so does clawback.
+
+share one issuer and a court order against one property freezes the others.
+
+that's not a theoretical objection, it's the first question anyone from a
+tokenization company would ask, and "we reused the issuer to save time" is a bad
+answer. so: a dedicated account per asset, and a dedicated domain too, on the
+same logic one level up — eligibility for one property shouldn't imply
+eligibility for another.
+
+created a second property. four transactions, own issuer, own domain, all
+confirmed. onboarded alice to it: trust line, authorisation, 250 units. three
+more transactions, two different signers.
+
+---
+
+## day 13 — two deliberate exceptions to the async rule
+
+both of these run **inline**, against the pattern everywhere else in the
+project. worth writing down why, because "why is this the one synchronous write"
+is exactly what a reviewer would ask.
+
+**asset creation** is four ordered transactions, and clawback cannot be enabled
+once trust lines exist. an issuer that got require-auth but not clawback is
+*permanently* unable to gain it. that isn't a retryable failure, it's a broken
+account. the intents machinery exists for operations that fail and can be
+retried independently — this isn't one.
+
+**onboarding** is three transactions across two different signers. the worker
+orders intents per account, which does nothing when the dependency crosses
+accounts: the investor's trust line must be validated before the issuer can
+authorise it. building a cross-account dependency graph for a three-step
+bootstrap would be the wrong trade.
+
+both take 15-20 seconds. a spinner beats a half-initialised issuer.
+
+the rule i've settled on: **async for operations, synchronous for bootstrap.**
+the async path is right for anything ongoing and repeated. it's wrong for
+one-time setup where a partial result is unrecoverable rather than retryable.
+
+---
+
+## day 13 — a leak i didn't cause and didn't touch
+
+added `issuer_seed` to the assets table, because each asset now has its own
+issuer account and something has to hold the key.
+
+then looked at the API response:
+
+```json
+{ "asset_id": "prop-002", ...,
+  "issuer_seed": "sEdT9bUVrRpgaHaEx7Gp6omzDFj21Kq" }
+```
+
+**a private key, on a public endpoint.**
+
+testnet keys controlling nothing, so no harm. but the endpoint was written days
+ago and i didn't go near it today. it used `select a.*`, the table gained a
+sensitive column an hour earlier, and it started leaking without a single line
+changing.
+
+that's a nastier shape than a normal bug. there's no commit that introduced it —
+the leak was created by a schema change in a different file.
+
+`select *` on anything public is now off the list. explicit columns only.
+
+---
+
+## where the platform is
+
+multi-asset, per-asset issuers and domains, onboarding, and a permissioned
+secondary market per asset. every piece of ledger state projected from the log,
+reconciled unattended, repaired by replay.
+
+it does asset creation, allocation, trading, freeze, clawback, KYC with
+two-sided credentials, and drift detection. that's the whole arc.
+
+---
+
 *continues.*
