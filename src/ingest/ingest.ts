@@ -103,7 +103,7 @@ async function backfillAccount(
 }
 
 export async function runIngest(opts: { once?: boolean } = {}) {
-  const accounts = await watchedAccounts()
+  const accounts = [...await watchedAccounts()]
   if (accounts.length === 0) {
     console.log('no accounts to watch — seed an asset or investor first')
     return
@@ -196,6 +196,23 @@ export async function runIngest(opts: { once?: boolean } = {}) {
   // an unrelated restart backfilled them.
   setInterval(async () => {
     try {
+      // Re-read the watched set. Accounts are added by onboarding and
+      // replaced wholesale by a reseed, and watchedAccounts() otherwise
+      // only runs at startup — so a long-running ingest keeps watching
+      // accounts that no longer matter and never notices the new ones.
+      //
+      // Found in production: a reseed left the deployed ingest
+      // subscribed to the previous seed's accounts. It looked healthy
+      // and recorded nothing.
+      const current = await watchedAccounts()
+      const added = current.filter(a => !accounts.includes(a))
+      if (added.length > 0) {
+        accounts.length = 0
+        accounts.push(...current)
+        await client.request({ command: 'subscribe', accounts: current })
+        console.log(`  now watching ${current.length} account(s) (+${added.length} new)`)
+      }
+
       const from = await readWatermark()
       let total = 0
       let maxLedger = from
