@@ -6,7 +6,7 @@ to this after months away — including me.
 Updated at each build stage. If something here contradicts the code, the code
 is right and this is stale; open an issue.
 
-**Last updated:** stage 6 — permissioned secondary market, order book UI.
+**Last updated:** stage 6 complete — secondary market, unattended reconciliation.
 
 ---
 
@@ -679,6 +679,47 @@ you encounter, not a market you can look at but cannot enter.
 
 Prices are entered as XRP per unit and converted to drops in the client, with the
 total shown alongside so there is no ambiguity about what is being agreed to.
+
+### Reconciliation runs unattended
+
+The ingest runs the reconciler every 60 seconds on its **own** connection.
+
+Nothing else invokes it in production. Before this, the regulator panel could
+report `clean` from a check that last ran days earlier — honest, since no
+findings were open, but silent rather than verified. **A clean status with an old
+timestamp is not clean, it is unexamined.**
+
+`reconcile()` takes an optional `client`. The ingest passes its own, because
+opening a fresh connection every minute doubles the exposure to a public cluster
+that refuses a meaningful share of them.
+
+`connectionTimeout` is raised to 20 seconds. The 5-second default produces
+spurious failures in anything that connects on a timer.
+
+### The watched account set is re-read on every sweep
+
+`watchedAccounts()` used to run only at startup, so a long-running ingest kept
+watching accounts that no longer mattered and never noticed new ones.
+
+Found in production: a reseed left the deployed ingest subscribed to the previous
+seed's accounts. It reported `Online`, logged nothing, and recorded nothing. In
+development this is invisible because you restart the ingest after every reseed.
+In production nobody restarts anything.
+
+The sweep now compares the current set against the subscribed set and resubscribes
+when accounts are added. Removals are ignored — a stale subscription is harmless.
+
+### Hazard: the issuer set is read once per projection run
+
+`project()` calls `loadKnownIssuers()` at the top. A reseed running concurrently
+with a projection pass can therefore attribute balance changes against a stale
+issuer, producing rows filed under the wrong issuer key.
+
+Observed in production: Alice's balance appeared as `-100` under the previous
+issuer instead of `400` under the new one. The reconciler detected it; a replay
+repaired it.
+
+**Reseed with the projection idle**, or replay afterwards.
 
 ---
 

@@ -1188,4 +1188,119 @@ days earlier.
 
 ---
 
+---
+
+## day 12, late — a clean status that hadn't checked anything
+
+went to verify the deployed instance and got:
+
+```json
+{ "status": "clean", "findingCount": 0,
+  "sync": { "updated_at": "2026-09-08T19:28:39Z" } }
+```
+
+clean. from two days earlier.
+
+**nothing was invoking the reconciler in production.** locally i run it by hand.
+on railway nothing called it at all, so the regulator panel would have shown
+green forever regardless of what was true.
+
+it wasn't lying — no findings were open. but "no open findings" and "verified
+just now" are completely different claims, and the API was presenting the first
+as the second.
+
+added a 60-second reconcile to the ingest loop. first thing it did:
+
+```
+reconcile failed: Error: connect() timed out after 5000 ms
+```
+
+which was useful, because it surfaced that `reconcile()` opens its own
+connection every time. the ingest is already connected. so now it borrows the
+caller's client, and the connect timeout went from 5 seconds to 20, because the
+public cluster refuses a meaningful share of connections and 5 seconds is too
+tight for anything on a timer.
+
+three fixes, each one revealed by the previous. that's been the shape of most of
+this project.
+
+---
+
+## day 13 — the deployed ingest was watching ghosts
+
+reseeded the deployed database. seed output looked perfect: fresh accounts,
+permissioned trade succeeded, registry populated, alice 400 bob 100.
+
+holdings endpoint: `[]`.
+
+**the deployed ingest was still subscribed to the previous seed's accounts.**
+`watchedAccounts()` runs once at startup, so it was watching five addresses that
+no longer had anything to do with anything, reporting `Online`, and recording
+nothing.
+
+locally i'd never have found this, because i restart the ingest after every
+reseed out of habit. in production nobody restarts anything.
+
+fix: the sweep re-reads the watched set and resubscribes when accounts appear.
+tested it by inserting an investor directly and watching the log pick it up
+thirty seconds later without a restart.
+
+what i keep running into is that **development habits hide production bugs.**
+the manual restart wasn't a workaround i'd chosen, it was a reflex i didn't know
+i had.
+
+---
+
+## day 13 — the reconciler caught a production bug on its own
+
+after the fix, holdings came back:
+
+```
+Bob Osei    100
+Alice Nakamura  -100
+```
+
+bob right, alice negative. she should be 400.
+
+but i didn't have to work out why, because the reconciler had already found it:
+
+```json
+{ "status": "drift", "findingCount": 2,
+  "findings": [
+    { "account": "rP1PpWt...", "ledger_value": "-500", "registry_value": "0" },
+    { "account": "rfoMGqA...", "ledger_value": "400", "registry_value": null }
+  ]}
+```
+
+the issuer should be -500 and the projection said 0. alice should be 400 and the
+projection had **no row for her at all** under the correct issuer.
+
+that's enough to diagnose it from the API response alone: her balance was filed
+under the wrong issuer key. `project()` reads the known-issuer set once at the
+top of a run, so a reseed racing a projection pass attributes changes against a
+stale issuer.
+
+repair was `npm run project -- --rebuild`. 42 events replayed. clean within a
+minute, findings auto-resolved.
+
+---
+
+## day 13 — what that sequence actually demonstrates
+
+a bug appeared in production, in a deployment i wasn't watching. i found out
+because the reconciler had already detected it and recorded findings precise
+enough to diagnose the cause without opening a log or reading any code.
+
+the repair was a replay, not a patch, because the projection is a pure function
+of the event log. then the findings closed themselves on the next pass.
+
+detect, diagnose, repair, resolve. in production, on a real bug, with no manual
+state surgery.
+
+that's the claim the readme makes about this system. up to now i could only
+demonstrate it with a deliberate drift injection, which is a bit like testing a
+smoke alarm with a lighter. this was a real fire, and i wasn't in the room.
+
+---
+
 *continues.*
