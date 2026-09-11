@@ -18,7 +18,11 @@ import { TradingPanel } from '../components/Trading'
 
 export function InvestorView({ platform }: { platform: Snapshot & { refresh?: () => void } }) {
   const { assets, holdings, investors } = platform
-  const asset = assets[0]
+  // Scoped to the SELECTED asset. Using assets[0] here showed the
+  // first asset's figures beside the selected asset's holdings — a
+  // summary panel confidently describing a different asset from the
+  // table beneath it.
+  const asset = assets.find(a => a.asset_id === platform.assetId) ?? assets[0]
 
   const realInvestors = investors.filter(i => i.kyc_status !== 'system')
   const [selected, setSelected] = useState<string | null>(null)

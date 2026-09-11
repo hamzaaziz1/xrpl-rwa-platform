@@ -19,6 +19,8 @@ import {
 const POLL_MS = 2000
 
 export interface Snapshot {
+  /** The asset everything else in the snapshot is scoped to. */
+  assetId: string | null
   assets: Asset[]
   holdings: Holding[]
   investors: Investor[]
@@ -30,6 +32,7 @@ export interface Snapshot {
 }
 
 const EMPTY: Snapshot = {
+  assetId: null,
   assets: [],
   holdings: [],
   investors: [],
@@ -42,12 +45,23 @@ const EMPTY: Snapshot = {
 
 export function usePlatform() {
   const [snap, setSnap] = useState<Snapshot>(EMPTY)
+
+  // Held in a ref rather than state so the poll interval's closure always
+  // reads the current value. With state it would capture whatever was
+  // selected when the interval was created.
   const assetIdRef = useRef<string | null>(null)
 
   const refresh = useCallback(async () => {
     try {
       const assets = await api.assets()
-      const assetId = assetIdRef.current ?? assets[0]?.asset_id ?? null
+
+      // If the selected asset disappears (a reset, a reseed), fall back
+      // to the first one rather than fetching for an id that no longer
+      // exists.
+      const stillThere = assets.some(a => a.asset_id === assetIdRef.current)
+      const assetId = stillThere
+        ? assetIdRef.current
+        : assets[0]?.asset_id ?? null
       assetIdRef.current = assetId
 
       const [holdings, investors, intents, reconciliation, book] = await Promise.all([
@@ -59,7 +73,7 @@ export function usePlatform() {
       ])
 
       setSnap({
-        assets, holdings, investors, intents, reconciliation, book,
+        assetId, assets, holdings, investors, intents, reconciliation, book,
         loading: false, error: null,
       })
     } catch (e: any) {
@@ -73,7 +87,13 @@ export function usePlatform() {
     return () => clearInterval(t)
   }, [refresh])
 
-  return { ...snap, refresh }
+  /** Switch asset. Re-points the ref and fetches immediately. */
+  const selectAsset = useCallback((id: string) => {
+    assetIdRef.current = id
+    refresh()
+  }, [refresh])
+
+  return { ...snap, refresh, selectAsset }
 }
 
 /** Intents that haven't settled yet. Drives the "in flight" indicator. */

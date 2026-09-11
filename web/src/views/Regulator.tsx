@@ -16,7 +16,11 @@ import { Panel, Table, Td, Status, Empty } from '../components/ui'
 
 export function RegulatorView({ platform }: { platform: Snapshot }) {
   const { assets, holdings, intents, reconciliation } = platform
-  const asset = assets[0]
+  // Scoped to the SELECTED asset. Using assets[0] here showed the
+  // first asset's figures beside the selected asset's holdings — a
+  // summary panel confidently describing a different asset from the
+  // table beneath it.
+  const asset = assets.find(a => a.asset_id === platform.assetId) ?? assets[0]
 
   if (!asset) return <Empty>No asset. Run <code>npm run seed</code>.</Empty>
 

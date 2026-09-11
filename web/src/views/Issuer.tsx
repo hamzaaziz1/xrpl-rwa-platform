@@ -14,7 +14,11 @@ import { Panel, Table, Td, Status, Button, Empty } from '../components/ui'
 
 export function IssuerView({ platform }: { platform: Snapshot & { refresh: () => void } }) {
   const { assets, holdings, investors, intents, refresh } = platform
-  const asset = assets[0]
+  // Scoped to the SELECTED asset. Using assets[0] here showed the
+  // first asset's figures beside the selected asset's holdings — a
+  // summary panel confidently describing a different asset from the
+  // table beneath it.
+  const asset = assets.find(a => a.asset_id === platform.assetId) ?? assets[0]
   const [busy, setBusy] = useState<string | null>(null)
   const [clawTarget, setClawTarget] = useState<string | null>(null)
   const [clawAmount, setClawAmount] = useState('')

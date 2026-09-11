@@ -18,16 +18,36 @@ export default function App() {
   const platform = usePlatform()
 
   const pending = inFlight(platform.intents)
-  const asset = platform.assets[0]
+
+  // Scoped to the selected asset, falling back to the first.
+  const asset = platform.assets.find(a => a.asset_id === platform.assetId)
+    ?? platform.assets[0]
 
   return (
     <div className="min-h-screen bg-neutral-50 text-neutral-900">
       <header className="border-b border-neutral-300 bg-white">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-3">
           <div className="flex items-baseline gap-3">
-            <h1 className="text-sm font-semibold">
-              {asset?.title ?? 'RWA Platform'}
-            </h1>
+            {/* The selector only appears with more than one asset, so a
+                single-asset deployment looks unchanged. */}
+            {platform.assets.length > 1 ? (
+              <select
+                value={platform.assetId ?? ''}
+                onChange={e => platform.selectAsset(e.target.value)}
+                className="border border-neutral-300 bg-white px-2 py-1 text-sm font-semibold"
+              >
+                {platform.assets.map(a => (
+                  <option key={a.asset_id} value={a.asset_id}>
+                    {a.title}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <h1 className="text-sm font-semibold">
+                {asset?.title ?? 'RWA Platform'}
+              </h1>
+            )}
+
             {asset && (
               <span className="font-mono text-xs text-neutral-500">
                 {asset.external_ref} · {asset.currency}
