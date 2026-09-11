@@ -139,6 +139,16 @@ export const api = {
   events: (limit = 50) => get<LedgerEvent[]>(`/api/events?limit=${limit}`),
     book: (assetId: string) => get<Book>(`/api/assets/${assetId}/book`),
 
+  // Synchronous, unlike the rest. No intent to poll — these either
+  // complete or leave nothing behind. Expect 15-20 seconds.
+  createAsset: (body: {
+    assetId: string; currency: string; title: string
+    externalRef?: string; jurisdiction?: string; totalUnits: number
+  }) => post<any>('/api/assets', body),
+
+  onboard: (assetId: string, body: { investorId: string; units?: string }) =>
+    post<any>(`/api/assets/${assetId}/onboard`, body),
+
   placeOffer: (assetId: string, body: {
     investorId: string; side: 'ask' | 'bid'; units: string; xrpDrops: string
   }) => post<{ intentId: string }>(`/api/assets/${assetId}/offers`, body),

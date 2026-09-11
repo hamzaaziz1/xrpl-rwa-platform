@@ -11,6 +11,7 @@ import {
   shortAddr, shortHash, units, ago, explorerTx, INTENT_LABEL,
 } from '../lib/format'
 import { Panel, Table, Td, Status, Button, Empty } from '../components/ui'
+import { CreateAssetForm, OnboardForm } from '../components/AssetForms'
 
 export function IssuerView({ platform }: { platform: Snapshot & { refresh: () => void } }) {
   const { assets, holdings, investors, intents, refresh } = platform
@@ -45,6 +46,8 @@ export function IssuerView({ platform }: { platform: Snapshot & { refresh: () =>
 
   return (
     <div className="space-y-6">
+
+      <CreateAssetForm onCreated={refresh} />
 
       <Panel
         title="Asset"
@@ -103,7 +106,15 @@ export function IssuerView({ platform }: { platform: Snapshot & { refresh: () =>
         </Panel>
       )}
 
-            <Panel title="Register" subtitle="All accounts with a trust line for this asset">
+            <OnboardForm
+        assetId={asset.asset_id}
+        currency={asset.currency}
+        investors={investors}
+        holders={new Set(holdings.map(h => h.account))}
+        onDone={refresh}
+      />
+
+      <Panel title="Register" subtitle="All accounts with a trust line for this asset">
         {holdings.length === 0 ? (
           <Empty>No holders yet.</Empty>
         ) : (

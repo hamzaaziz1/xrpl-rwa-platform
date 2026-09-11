@@ -267,6 +267,28 @@ export function registerWrites(app: FastifyInstance) {
         })
       }
 
+      // A bid delivers units to the buyer, so they need an authorised
+      // trust line first. Without this the ledger refuses with
+      // tecNO_LINE eight seconds later — correct, but the buyer has no
+      // idea they needed to be onboarded to this asset.
+      if (side === 'bid') {
+        const [line] = await query<{ frozen: boolean }>(
+          `select frozen from holdings
+            where currency = $1 and issuer = $2 and account = $3`,
+          [asset.currency, asset.issuer, investor.account],
+        )
+        if (!line) {
+          return reply.code(400).send({
+            error: `no trust line for ${asset.currency} — this account must be onboarded to the asset before it can buy units`,
+          })
+        }
+        if (line.frozen) {
+          return reply.code(403).send({
+            error: 'this holding is frozen and cannot receive units',
+          })
+        }
+      }
+
       if (side === 'ask') {
         const [holding] = await query<{ balance: string; frozen: boolean }>(
           `select balance, frozen from holdings
