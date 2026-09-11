@@ -6,7 +6,7 @@ to this after months away — including me.
 Updated at each build stage. If something here contradicts the code, the code
 is right and this is stale; open an issue.
 
-**Last updated:** stage 7 — multi-asset.
+**Last updated:** stage 7 complete — multi-asset, end to end through the UI.
 
 ---
 
@@ -763,6 +763,31 @@ issuer or a half-onboarded investor.
 
 The async intents path remains correct for everything ongoing: issuance, freeze,
 clawback, credentials, offers. The distinction is bootstrap versus operation.
+
+### The UI is scoped to a selected asset
+
+The store holds `assetId` in a **ref**, not state, because the poll interval's
+closure would otherwise capture whatever was selected when the interval was
+created and never see changes. If the selected asset disappears (a reset, a
+reseed) it falls back to the first rather than fetching for an id that no longer
+exists.
+
+Every view must derive its asset from `platform.assetId`, not `assets[0]`. Using
+the latter produced a summary panel confidently describing a different asset from
+the table beneath it — 500 units outstanding above a register showing 250.
+Nothing errored; two numbers simply could not both be true.
+
+### Bids are guarded against a missing trust line
+
+A bid delivers units to the buyer, so they need an authorised trust line first.
+Without the guard the ledger refuses with `tecNO_LINE` eight seconds later —
+correct, and useless, because the buyer has no idea they needed onboarding to
+that asset.
+
+The guard reads `holdings`, which is the projection, so an investor onboarded
+seconds ago might briefly be refused. Onboarding is synchronous and the
+projection runs every two seconds, so the window is small — a fast wrong answer
+traded against a slow right one.
 
 ### Onboarding enforces eligibility and the ceiling
 

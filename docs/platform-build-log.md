@@ -1394,4 +1394,110 @@ two-sided credentials, and drift detection. that's the whole arc.
 
 ---
 
+---
+
+## day 14 — the last mile
+
+asset creation and onboarding existed as endpoints but not as forms, so a
+reviewer clicking around would have assumed neither was supported. built both,
+plus an asset selector in the header.
+
+created a third property through the UI — four transactions, own issuer, own
+domain — and onboarded bob to it. the whole lifecycle is now clickable: create,
+onboard, allocate, trade, freeze, claw back.
+
+---
+
+## day 14 — a panel that described a different asset
+
+the selector worked immediately and the register followed it. the asset summary
+didn't.
+
+so prop-002 showed **500 units outstanding, 500 ceiling, prop-001's issuer** —
+directly above a register showing alice at 250 VLA. all three views still did
+`const asset = assets[0]`.
+
+nothing errored. two numbers that couldn't both be true, sitting eight
+centimetres apart, and only obvious because i knew what the right answer was.
+
+that's the third variant of the same failure this project has produced: a
+confident, well-formatted, internally consistent display of the wrong thing.
+first a script printing labels over stale state, then a guard that silently
+never matched, now a summary panel disagreeing with the table beneath it.
+
+i'm starting to think that's the characteristic bug of this kind of system.
+errors are easy — something stops. these don't stop.
+
+---
+
+## day 14 — tecNO_LINE, and where a check belongs
+
+tried to bid on the new asset before onboarding anyone. failed with `tecNO_LINE`,
+and my own library said "No specific diagnosis available for this code."
+
+which is fair. i'd built `xrpl-why` around `tecPATH_DRY` and never added the
+code for "this account has no trust line for this token", despite it being one
+of the most common failures on the ledger. added it, republished.
+
+but the better fix was moving the check. a bid delivers units to the buyer, so
+they need an authorised trust line — and the API can know that before submitting
+anything. now:
+
+```
+no trust line for VLA — this account must be onboarded to
+the asset before it can buy units
+```
+
+immediately, naming the currency and the remedy, instead of eight seconds later
+with a three-letter code.
+
+the pattern i keep arriving at: **the ledger's answer is authoritative and
+frequently useless.** `xrpl-why` exists to translate it after the fact. a
+boundary check is better still, because it never happens.
+
+one honest caveat i wrote into the manual: the guard reads the projection, so
+someone onboarded two seconds ago could be refused. a fast wrong answer traded
+against a slow right one, and i'd rather that trade be visible than pretended
+away.
+
+---
+
+## day 14 — expired, for real
+
+two intents came back `expired` — `LastLedgerSequence passed`.
+
+i've been writing about that state since day 6 as the thing that makes the async
+design tractable: once the deadline ledger closes without validation, the
+transaction can **never** apply, so retrying is safe. no mempool, no ambiguity.
+
+today the connection was bad enough that it actually happened, twice. and the
+intents table recorded exactly what it should: a final state, not a pending one,
+not a mystery.
+
+the design handled it without me doing anything. which is what you want from a
+design, and is also the least dramatic possible outcome.
+
+---
+
+## where this ends
+
+the platform does the whole arc, through the interface:
+
+- create an asset — own issuer account, own permissioned domain, four ordered
+  transactions with clawback first because it can never be added later
+- onboard investors — trust line, authorisation, allocation, across two signers
+- two-sided KYC credentials, issued and accepted separately
+- trade on a permissioned order book, non-members in a different book entirely
+- freeze, unfreeze, claw back
+- every piece of ledger state projected from an append-only log
+- reconciled unattended in both directions, repaired by replay
+- failures carrying real diagnoses from a package i published
+
+fourteen days from no XRPL experience.
+
+what's left is genuinely cosmetic. the thing that isn't finished is the
+conversation this was all for.
+
+---
+
 *continues.*
